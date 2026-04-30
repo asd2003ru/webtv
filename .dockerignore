@@ -1,0 +1,9 @@
+.git
+.gitignore
+.cache
+.gocache
+node_modules
+web/node_modules
+web/dist
+*.db
+*.log

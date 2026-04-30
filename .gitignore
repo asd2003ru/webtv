@@ -1,0 +1,24 @@
+# Local workspace artifacts
+.codex
+.cache/
+.gocache/
+AGENT.md
+promt.md
+
+# Build outputs
+/bin/
+/webtv
+
+# Frontend artifacts
+web/node_modules/
+web/dist/
+internal/webui/dist/
+
+# Runtime data
+*.db
+*.log
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/

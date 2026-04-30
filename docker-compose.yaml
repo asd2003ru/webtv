@@ -1,0 +1,36 @@
+services:
+  webtv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: webtv:latest
+    container_name: webtv
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # HTTP listen address inside the container.
+      WEBTV_ADDR: ${WEBTV_ADDR:-:8080}
+      # SQLite database file path.
+      WEBTV_DB_PATH: ${WEBTV_DB_PATH:-/data/webtv.db}
+      # Log verbosity level: debug, info, warn, error.
+      WEBTV_LOG_LEVEL: ${WEBTV_LOG_LEVEL:-info}
+      # UI application title shown in the header.
+      WEBTV_APP_TITLE: ${WEBTV_APP_TITLE:-WebTV}
+      # Single connection policy for channel streams: reject or replace.
+      WEBTV_SINGLE_CONN_POLICY: ${WEBTV_SINGLE_CONN_POLICY:-reject}
+      # ffmpeg binary name or absolute path.
+      WEBTV_FFMPEG_BIN: ${WEBTV_FFMPEG_BIN:-ffmpeg}
+      # Stream idle timeout in seconds.
+      WEBTV_STREAM_IDLE_TIMEOUT_SEC: ${WEBTV_STREAM_IDLE_TIMEOUT_SEC:-12}
+      # Maximum stream retry attempts.
+      WEBTV_STREAM_RETRY_MAX: ${WEBTV_STREAM_RETRY_MAX:-5}
+      # Stream mode cache TTL in minutes.
+      WEBTV_STREAM_MODE_CACHE_TTL_MIN: ${WEBTV_STREAM_MODE_CACHE_TTL_MIN:-360}
+      # Enable exponential backoff for manifest fetch retries.
+      WEBTV_STREAM_MANIFEST_BACKOFF_ENABLED: ${WEBTV_STREAM_MANIFEST_BACKOFF_ENABLED:-false}
+    volumes:
+      - webtv-data:/data
+
+volumes:
+  webtv-data:
