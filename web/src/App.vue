@@ -283,6 +283,8 @@ let hls = null
 let lastForcedReloadAtMs = 0
 const forceReloadCooldownMs = 1500
 let stalledRecoveryTimer = null
+let userPausedPlayback = false
+let streamSuspendedForPause = false
 const showDebugOverlay = ref(true)
 const startupState = ref('idle')
 const deinterlaceEnabled = ref(false)
@@ -1355,21 +1357,68 @@ async function refreshStreamModeForCurrentChannel() {
   }
 }
 
-function setVideoSourceIfChanged(nextSrc, { force = false } = {}) {
+function suspendStreamForPause() {
+  if (!video.value || !currentVideoSrc.value) return
+  streamSuspendedForPause = true
+  clearStalledRecoveryTimer()
+  clearStartupSlowTimer()
+  startupState.value = 'idle'
+  destroyHls()
+  video.value.removeAttribute('src')
+  video.value.load()
+  hlsDebug.value.state = 'paused'
+  hlsDebug.value.buffer = '0.0s'
+  hlsDebug.value.latency = '-'
+}
+
+function resumeStreamAfterPause() {
+  if (!video.value) return
+  userPausedPlayback = false
+  const targetURL = currentTargetStreamURL() || currentVideoSrc.value
+  if (!targetURL) {
+    void video.value.play().catch(() => {})
+    return
+  }
+  streamSuspendedForPause = false
+  setVideoSourceIfChanged(targetURL, { force: true, skipCooldown: true, allowWhilePaused: true })
+  void video.value.play().catch(() => {})
+}
+
+function playVideoSource(nextSrc, options = {}) {
+  if (!video.value || !nextSrc) return false
+  const wasSuspended = streamSuspendedForPause
+  userPausedPlayback = false
+  const reloaded = setVideoSourceIfChanged(nextSrc, {
+    ...options,
+    force: options.force || wasSuspended,
+    skipCooldown: options.skipCooldown || wasSuspended,
+    allowWhilePaused: true
+  })
+  void video.value.play().catch(() => {})
+  return reloaded
+}
+
+function setVideoSourceIfChanged(nextSrc, { force = false, skipCooldown = false, allowWhilePaused = false } = {}) {
   if (!video.value) return false
   if (!nextSrc) return false
   if (force) {
     const now = Date.now()
-    if (now - lastForcedReloadAtMs < forceReloadCooldownMs) {
+    if (!skipCooldown && now - lastForcedReloadAtMs < forceReloadCooldownMs) {
       return false
     }
     lastForcedReloadAtMs = now
+  }
+  if (userPausedPlayback && !allowWhilePaused) {
+    currentVideoSrc.value = nextSrc
+    suspendStreamForPause()
+    return true
   }
   if (!force && currentVideoSrc.value === nextSrc) {
     return false
   }
   beginStartupOverlay()
   currentVideoSrc.value = nextSrc
+  streamSuspendedForPause = false
   if (shouldUseManagedHls(nextSrc)) {
     if (!hls) {
       hls = new Hls({
@@ -1403,10 +1452,12 @@ function setVideoSourceIfChanged(nextSrc, { force = false } = {}) {
 
 function togglePlayPause() {
   if (!video.value) return
-  if (video.value.paused) {
-    void video.value.play()
+  if (video.value.paused || streamSuspendedForPause) {
+    resumeStreamAfterPause()
   } else {
+    userPausedPlayback = true
     video.value.pause()
+    suspendStreamForPause()
   }
 }
 
@@ -1440,6 +1491,8 @@ function revealControls() {
 }
 
 function onVideoPlay() {
+  userPausedPlayback = false
+  streamSuspendedForPause = false
   isPlaying.value = true
   resumePlaybackTracking()
   clearStalledRecoveryTimer()
@@ -1988,7 +2041,7 @@ async function selectChannel() {
   const c = channels.value.find((x) => x.id === selectedChannel.value)
   archiveSupported.value = !!c?.archive_supported
   const liveURL = withStreamOptions(`/api/channels/${selectedChannel.value}/stream`)
-  setVideoSourceIfChanged(liveURL)
+  playVideoSource(liveURL)
   void loadAudioTracks()
 
   const res = await fetch(liveURL, { method: 'HEAD' })
@@ -2046,7 +2099,7 @@ function selectProgram(program, options = {}) {
   if (!video.value || !selectedChannel.value) return
 
   const streamURL = streamURLForProgram(selectedChannel.value, program, timeshiftOffsetSeconds.value)
-  setVideoSourceIfChanged(streamURL)
+  playVideoSource(streamURL)
   startPlaybackTracking(initialOffset)
 }
 
@@ -2085,7 +2138,7 @@ function applyTimeshift() {
   timeshiftDragging.value = false
   if (!selectedProgram.value || !video.value || !selectedChannel.value) return
   const streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, timeshiftOffsetSeconds.value)
-  setVideoSourceIfChanged(streamURL)
+  playVideoSource(streamURL)
   startPlaybackTracking(timeshiftOffsetSeconds.value)
 }
 
