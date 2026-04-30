@@ -2689,7 +2689,7 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
 }
 .favorite-toggle { display: inline-flex; align-items: center; justify-content: center; font-size: 16px; line-height: 1; color: #b9c3cf; user-select: none; cursor: pointer; }
 .favorite-toggle.active { color: #d49a00; }
-.programs-under-player { border: 1px solid var(--border-soft); border-radius: 10px; background: var(--card-soft); padding: 10px; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
+.programs-under-player { border: 1px solid var(--border-soft); border-radius: 10px; background: var(--card-soft); padding: 10px; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .player-status-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .status-badge {
   display: inline-flex;
@@ -2739,27 +2739,30 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
   50% { opacity: 1; transform: scale(1); }
 }
 .programs-under-player h3 { margin: 0 0 8px; }
-.programs-custom-scroll { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 10px; gap: 8px; }
-.programs-viewport { min-height: 0; overflow: hidden; outline: none; }
-.programs-list { margin: 0; padding: 0; list-style: none; will-change: transform; }
-.programs-scrollbar {
+.programs-custom-scroll { min-height: 0; height: 100%; overflow: hidden; display: block; }
+.programs-viewport {
   min-height: 0;
-  position: relative;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  outline: none;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, #4d84c4 70%, #a8c2dd 30%) color-mix(in srgb, var(--card-strong) 82%, #5e7389 18%);
+}
+.programs-viewport::-webkit-scrollbar { width: 10px; }
+.programs-viewport::-webkit-scrollbar-track {
   border-radius: 999px;
   background: color-mix(in srgb, var(--card-strong) 82%, #5e7389 18%);
-  user-select: none;
-  touch-action: none;
 }
-.programs-scrollbar-thumb {
-  position: absolute;
-  left: 1px;
-  right: 1px;
-  top: 0;
+.programs-viewport::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
   border-radius: 999px;
   background: color-mix(in srgb, #4d84c4 70%, #a8c2dd 30%);
-  cursor: grab;
+  background-clip: content-box;
 }
-.programs-scrollbar-thumb:active { cursor: grabbing; }
+.programs-list { margin: 0; padding: 0; list-style: none; }
 .program-item { margin-bottom: 6px; }
 .program-item button { width: 100%; text-align: left; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--card-strong); color: var(--text-on-card); padding: 8px; cursor: pointer; position: relative; overflow: hidden; }
 .program-item button:disabled { opacity: 0.75; cursor: not-allowed; background: color-mix(in srgb, var(--card-strong) 70%, #6d7d90 30%); color: var(--text-subtle-on-card); }

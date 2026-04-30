@@ -56,13 +56,12 @@
         ref="viewportEl"
         class="programs-viewport"
         tabindex="0"
-        @wheel.prevent="onWheel"
         @keydown="onViewportKeyDown"
+        @scroll="onViewportScroll"
       >
         <ul
           ref="contentEl"
           class="programs-list"
-          :style="{ transform: `translateY(${-scrollTopPx}px)` }"
         >
           <li
             v-for="p in programs"
@@ -105,20 +104,6 @@
           </li>
         </ul>
       </div>
-
-      <div
-        ref="trackEl"
-        class="programs-scrollbar"
-        @pointerdown.prevent="onTrackPointerDown"
-        @wheel.prevent="onWheel"
-      >
-        <div
-          ref="thumbEl"
-          class="programs-scrollbar-thumb"
-          :style="{ height: `${thumbHeightPx}px`, transform: `translateY(${thumbTopPx}px)` }"
-          @pointerdown.stop.prevent="onThumbPointerDown"
-        ></div>
-      </div>
     </div>
   </div>
 </template>
@@ -155,34 +140,17 @@ const props = defineProps({
 
 const viewportEl = ref(null)
 const contentEl = ref(null)
-const trackEl = ref(null)
-const thumbEl = ref(null)
 
 const scrollTopPx = ref(0)
 const viewportHeightPx = ref(0)
 const contentHeightPx = ref(0)
 
 let resizeObserver = null
-let dragState = null
+let focusRequestId = 0
 const LINE_SCROLL_STEP_PX = 40
 const MIN_PAGE_SCROLL_STEP_PX = 40
-const THUMB_MIN_HEIGHT_PX = 24
 
 const maxScrollPx = computed(() => Math.max(0, contentHeightPx.value - viewportHeightPx.value))
-const thumbHeightPx = computed(() => {
-  const trackH = viewportHeightPx.value
-  if (trackH <= 0) return 0
-  if (maxScrollPx.value <= 0) return trackH
-  const raw = (trackH * trackH) / contentHeightPx.value
-  return Math.max(THUMB_MIN_HEIGHT_PX, Math.min(trackH, Math.round(raw)))
-})
-const thumbTopPx = computed(() => {
-  const trackH = viewportHeightPx.value
-  if (trackH <= 0) return 0
-  const movable = Math.max(0, trackH - thumbHeightPx.value)
-  if (maxScrollPx.value <= 0) return 0
-  return Math.round((scrollTopPx.value / maxScrollPx.value) * movable)
-})
 
 function clampScroll(next) {
   if (!Number.isFinite(next)) return 0
@@ -190,12 +158,16 @@ function clampScroll(next) {
 }
 
 function setScrollTop(next) {
-  scrollTopPx.value = clampScroll(next)
+  const nextTop = clampScroll(next)
+  scrollTopPx.value = nextTop
+  if (viewportEl.value && Math.abs(viewportEl.value.scrollTop - nextTop) > 1) {
+    viewportEl.value.scrollTop = nextTop
+  }
 }
 
 function measureScroller() {
   viewportHeightPx.value = viewportEl.value?.clientHeight || 0
-  contentHeightPx.value = contentEl.value?.scrollHeight || 0
+  contentHeightPx.value = viewportEl.value?.scrollHeight || contentEl.value?.scrollHeight || 0
   setScrollTop(scrollTopPx.value)
 }
 
@@ -209,14 +181,16 @@ function findFocusTargetElement() {
 
 function focusCurrentProgramInList() {
   const targetEl = findFocusTargetElement()
-  if (!targetEl) return
-  const targetTop = targetEl.offsetTop
-  const next = targetTop - Math.max(0, Math.floor((viewportHeightPx.value - targetEl.clientHeight) / 2))
+  if (!targetEl || !viewportEl.value) return
+  const viewportRect = viewportEl.value.getBoundingClientRect()
+  const targetRect = targetEl.getBoundingClientRect()
+  const targetTop = viewportEl.value.scrollTop + targetRect.top - viewportRect.top
+  const next = targetTop - Math.max(0, Math.floor((viewportEl.value.clientHeight - targetRect.height) / 2))
   setScrollTop(next)
 }
 
-function onWheel(event) {
-  setScrollTop(scrollTopPx.value + event.deltaY)
+function onViewportScroll(event) {
+  scrollTopPx.value = clampScroll(event.currentTarget.scrollTop)
 }
 
 function onViewportKeyDown(event) {
@@ -235,59 +209,21 @@ function onViewportKeyDown(event) {
   action()
 }
 
-function onTrackPointerDown(event) {
-  if (!trackEl.value || maxScrollPx.value <= 0) return
-  const rect = trackEl.value.getBoundingClientRect()
-  const clickY = event.clientY - rect.top
-  const movable = Math.max(1, rect.height - thumbHeightPx.value)
-  const thumbTop = Math.max(0, Math.min(movable, clickY - (thumbHeightPx.value / 2)))
-  setScrollTop((thumbTop / movable) * maxScrollPx.value)
-}
-
-function onThumbPointerDown(event) {
-  if (!thumbEl.value || !trackEl.value || maxScrollPx.value <= 0) return
-  const trackRect = trackEl.value.getBoundingClientRect()
-  const movable = Math.max(1, trackRect.height - thumbHeightPx.value)
-  dragState = {
-    pointerId: event.pointerId,
-    startY: event.clientY,
-    startTop: thumbTopPx.value,
-    movable
-  }
-  thumbEl.value.setPointerCapture(event.pointerId)
-  setThumbDragListeners(true)
-}
-
-function onThumbPointerMove(event) {
-  if (!dragState || event.pointerId !== dragState.pointerId) return
-  const delta = event.clientY - dragState.startY
-  const nextThumbTop = Math.max(0, Math.min(dragState.movable, dragState.startTop + delta))
-  setScrollTop((nextThumbTop / dragState.movable) * maxScrollPx.value)
-}
-
-function onThumbPointerUp(event) {
-  if (!thumbEl.value || !dragState || event.pointerId !== dragState.pointerId) return
-  thumbEl.value.releasePointerCapture(event.pointerId)
-  setThumbDragListeners(false)
-  dragState = null
-}
-
-function setThumbDragListeners(enabled) {
-  if (!thumbEl.value) return
-  const method = enabled ? 'addEventListener' : 'removeEventListener'
-  thumbEl.value[method]('pointermove', onThumbPointerMove)
-  thumbEl.value[method]('pointerup', onThumbPointerUp)
-  thumbEl.value[method]('pointercancel', onThumbPointerUp)
-}
-
 async function measureAndFocusCurrent() {
+  const requestId = ++focusRequestId
   await nextTick()
-  measureScroller()
-  focusCurrentProgramInList()
+  for (let frame = 0; frame < 3; frame += 1) {
+    if (typeof requestAnimationFrame === 'function') {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+    }
+    if (requestId !== focusRequestId) return
+    measureScroller()
+    focusCurrentProgramInList()
+  }
 }
 
 watch(
-  () => [props.selectedChannel, props.programs.length],
+  () => [props.selectedChannel, props.programs.length, props.selectedProgramKey],
   async () => { await measureAndFocusCurrent() },
   { flush: 'post' }
 )
@@ -307,10 +243,6 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect()
     resizeObserver = null
-  }
-  if (dragState && thumbEl.value) {
-    setThumbDragListeners(false)
-    dragState = null
   }
 })
 </script>
