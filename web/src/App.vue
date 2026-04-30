@@ -195,8 +195,37 @@ import PlaylistsPanel from './components/PlaylistsPanel.vue'
 import ChannelSidebar from './components/ChannelSidebar.vue'
 import PlayerStatusPrograms from './components/PlayerStatusPrograms.vue'
 import PlayerSurface from './components/PlayerSurface.vue'
+import { api, asArray } from './api'
 import { useUILanguage } from './composables/useUILanguage'
+import { useBrokenLogoCache } from './composables/useBrokenLogoCache'
+import {
+  channelInitial,
+  favoriteKey,
+  favoriteStorageKey,
+  findChannelByFavorite,
+  fuzzyScore
+} from './utils/channels'
+import {
+  buildGroupedChannels,
+  buildPlaylistVisibleCountById,
+  buildSettingsGroupedChannels
+} from './utils/channelGroups'
 import { getGroupStateForPlaylist, mergeGroupState, setGroupStateForPlaylist } from './utils/groupState'
+import {
+  currentOffsetForProgram as programCurrentOffset,
+  findClosestProgramToNow,
+  findNowProgram,
+  findProgramByNowHint,
+  formatOffset,
+  formatProgramDate,
+  formatSyncDateTime,
+  isCurrentProgram,
+  isFutureProgram,
+  isPastProgram,
+  programDescriptionTooltip,
+  programKey,
+  programProgressPercent as calculateProgramProgressPercent
+} from './utils/programs'
 
 const tab = ref('player')
 const appTitle = ref('WebTV')
@@ -232,7 +261,6 @@ const sidebarOpen = ref(true)
 const nowProgramByChannel = ref({})
 const openGroups = ref({})
 const settingsOpenGroups = ref({})
-const brokenLogos = ref({})
 const refreshingPlaylistIds = ref({})
 const pictureInPictureSupported = ref(false)
 const isInPictureInPicture = ref(false)
@@ -283,6 +311,12 @@ const {
   onLanguageModeChange,
   initLanguageMode
 } = useUILanguage()
+const {
+  showChannelLogo,
+  markLogoError,
+  loadBrokenLogos,
+  flushBrokenLogos
+} = useBrokenLogoCache()
 const hlsDebug = ref({
   engine: 'native',
   serverMode: '-',
@@ -399,76 +433,19 @@ const favoriteChannels = computed(() => {
     return matchesChannelSearch(c.name || '')
   })
 })
-const settingsGroupedChannels = computed(() => {
-  const groups = new Map()
-  for (const channel of channels.value) {
-    const groupName = channel.group || 'Без группы'
-    if (!groups.has(groupName)) groups.set(groupName, [])
-    groups.get(groupName).push(channel)
-  }
-  return [...groups.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([name, list]) => ({
-      name,
-      channels: [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-    }))
-})
-
-const groupedChannels = computed(() => {
-  const groups = new Map()
-  for (const channel of channels.value) {
-    if (isHiddenChannel(channel.playlist_id, channel.id, channel.external_id)) continue
-    const groupName = channel.group || 'Без группы'
-    if (isHiddenGroup(groupName)) continue
-    if (!matchesChannelSearch(channel.name || '')) continue
-    if (!groups.has(groupName)) groups.set(groupName, [])
-    groups.get(groupName).push(channel)
-  }
-  return [...groups.entries()].map(([name, list]) => ({
-    name,
-    channels: list
-  }))
-})
-const playlistVisibleCountById = computed(() => {
-  const counts = Object.fromEntries(playlists.value.map((playlist) => [playlist.id, Number(playlist.channel_count || 0)]))
-  for (const [playlistID, visibleCount] of Object.entries(visibleCountByPlaylist.value)) {
-    counts[Number(playlistID)] = Number(visibleCount || 0)
-  }
-  return counts
-})
-
-function channelInitial(name) {
-  const first = (name || '').trim().charAt(0)
-  return first ? first.toUpperCase() : 'TV'
-}
-
-function fuzzyScore(text, query) {
-  const source = String(text || '').toLowerCase()
-  const needle = String(query || '').toLowerCase().trim()
-  if (!needle) return 1
-  let idx = 0
-  for (const ch of needle) {
-    idx = source.indexOf(ch, idx)
-    if (idx < 0) return 0
-    idx += 1
-  }
-  return 1
-}
+const settingsGroupedChannels = computed(() => buildSettingsGroupedChannels(channels.value))
+const groupedChannels = computed(() => buildGroupedChannels(channels.value, {
+  isHiddenChannel,
+  isHiddenGroup,
+  matchesChannelSearch
+}))
+const playlistVisibleCountById = computed(() => buildPlaylistVisibleCountById(
+  playlists.value,
+  visibleCountByPlaylist.value
+))
 
 function matchesChannelSearch(name) {
   return fuzzyScore(name, channelSearchQuery.value) > 0
-}
-
-function showChannelLogo(channel) {
-  const url = (channel.logo || '').trim()
-  const key = `url:${url}`
-  return !!url && !brokenLogos.value[key]
-}
-
-function markLogoError(channel) {
-  const url = (channel?.logo || '').trim()
-  if (!url) return
-  brokenLogos.value[`url:${url}`] = true
 }
 
 function markFavoriteLogoError(channel) {
@@ -477,34 +454,6 @@ function markFavoriteLogoError(channel) {
 
 function setChannelSearchQuery(value) {
   channelSearchQuery.value = String(value || '')
-}
-
-function favoriteKey(playlistID, channelID) {
-  return `${playlistID}:${channelID}`
-}
-
-function favoriteExternalKey(playlistID, externalID) {
-  return `${playlistID}:ext:${externalID || ''}`
-}
-
-function favoriteStorageKey(item) {
-  if (item?.external_id) {
-    return favoriteExternalKey(item.playlist_id, item.external_id)
-  }
-  return favoriteKey(item?.playlist_id, item?.id)
-}
-
-function findChannelByFavorite(item, list = channels.value) {
-  if (!item || !item.playlist_id) return null
-  if (item.external_id) {
-    const byExternal = list.find((c) => c.playlist_id === item.playlist_id && c.external_id === item.external_id)
-    if (byExternal) return byExternal
-  }
-  if (item.id) {
-    const byID = list.find((c) => c.playlist_id === item.playlist_id && c.id === item.id)
-    if (byID) return byID
-  }
-  return null
 }
 
 const OPEN_GROUPS_STORAGE_KEY = 'webtv_open_groups_by_playlist_v1'
@@ -851,7 +800,7 @@ async function pickFavorite(channel) {
     localStorage.setItem('webtv_last_playlist', channel.playlist_id)
     await loadChannels()
   }
-  const target = findChannelByFavorite(channel)
+  const target = findChannelByFavorite(channel, channels.value)
   if (!target) {
     window.alert(t('channel_not_found'))
     favorites.value = favorites.value.filter((item) => favoriteStorageKey(item) !== favoriteStorageKey(channel))
@@ -862,7 +811,7 @@ async function pickFavorite(channel) {
 }
 
 function favoriteNowProgramTitle(channel) {
-  const resolved = findChannelByFavorite(channel) || channel
+  const resolved = findChannelByFavorite(channel, channels.value) || channel
   const key = favoriteKey(resolved.playlist_id, resolved.id)
   return favoriteNowProgramByKey.value[key]?.title || nowProgramByChannel.value[resolved.id]?.title || t('no_current_program')
 }
@@ -940,56 +889,6 @@ function emptyForm() {
   }
 }
 
-function findNowProgram(epgItems) {
-  const now = Date.now()
-  return epgItems.find((item) => {
-    const start = new Date(item.start_at).getTime()
-    const end = new Date(item.end_at).getTime()
-    return start <= now && now < end
-  })
-}
-
-function findProgramByNowHint(epgItems, nowItem) {
-  if (!nowItem || !Array.isArray(epgItems) || epgItems.length === 0) return null
-  const hintStart = new Date(nowItem.start_at).getTime()
-  const hintEnd = new Date(nowItem.end_at).getTime()
-  if (Number.isFinite(hintStart) && Number.isFinite(hintEnd) && hintEnd > hintStart) {
-    const midpoint = hintStart + Math.floor((hintEnd - hintStart) / 2)
-    const byRange = epgItems.find((item) => {
-      const start = new Date(item.start_at).getTime()
-      const end = new Date(item.end_at).getTime()
-      return Number.isFinite(start) && Number.isFinite(end) && start <= midpoint && midpoint < end
-    })
-    if (byRange) return byRange
-  }
-  if (nowItem.start_at) {
-    const byStart = epgItems.find((item) => item.start_at === nowItem.start_at)
-    if (byStart) return byStart
-  }
-  return null
-}
-
-function findClosestProgramToNow(epgItems) {
-  if (!Array.isArray(epgItems) || epgItems.length === 0) return null
-  const now = Date.now()
-  let lastPast = null
-  let firstFuture = null
-  for (const item of epgItems) {
-    const start = new Date(item.start_at).getTime()
-    const end = new Date(item.end_at).getTime()
-    if (!Number.isFinite(start) || !Number.isFinite(end)) continue
-    if (end <= now) {
-      lastPast = item
-      continue
-    }
-    if (start > now) {
-      firstFuture = item
-      break
-    }
-  }
-  return lastPast || firstFuture || epgItems[0]
-}
-
 async function fetchNowProgramForChannel(playlistID, channelID) {
   if (!playlistID || !channelID) return null
   try {
@@ -1001,83 +900,16 @@ async function fetchNowProgramForChannel(playlistID, channelID) {
   }
 }
 
-function formatProgramDate(value) {
-  const date = new Date(value)
-  return new Intl.DateTimeFormat(undefined, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date)
-}
-
-function formatSyncDateTime(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat(undefined, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  }).format(date)
-}
-
-function formatOffset(totalSeconds) {
-  const sec = Math.max(0, Math.floor(totalSeconds))
-  const hh = String(Math.floor(sec / 3600)).padStart(2, '0')
-  const mm = String(Math.floor((sec % 3600) / 60)).padStart(2, '0')
-  const ss = String(sec % 60).padStart(2, '0')
-  return `${hh}:${mm}:${ss}`
-}
-
-function programKey(program) {
-  return `${program.channel_id}-${program.start_at}`
-}
-
-function isCurrentProgram(program) {
-  const now = Date.now()
-  const start = new Date(program.start_at).getTime()
-  const end = new Date(program.end_at).getTime()
-  return start <= now && now < end
-}
-
-function isPastProgram(program) {
-  const end = new Date(program.end_at).getTime()
-  return end <= Date.now()
-}
-
-function isFutureProgram(program) {
-  const start = new Date(program.start_at).getTime()
-  return start > Date.now()
-}
-
 function isArchivePlayingProgram(program) {
   return archiveSupported.value && selectedProgramKey.value === programKey(program) && isPastProgram(program)
 }
 
 function programProgressPercent(program) {
-  const start = new Date(program.start_at).getTime()
-  const end = new Date(program.end_at).getTime()
-  const duration = end - start
-  if (duration <= 0) return 0
-  const elapsed = Math.max(0, Math.min(nowTickMs.value - start, duration))
-  return Math.round((elapsed / duration) * 100)
-}
-
-function programDescriptionTooltip(program) {
-  const desc = (program.description || '').trim()
-  return desc || 'Описание отсутствует'
+  return calculateProgramProgressPercent(program, nowTickMs.value)
 }
 
 function currentOffsetForProgram(program) {
-  const start = new Date(program.start_at).getTime()
-  const now = nowTickMs.value
-  const offset = Math.floor((now - start) / 1000)
-  return offset > 0 ? offset : 0
+  return programCurrentOffset(program, nowTickMs.value)
 }
 
 function currentLiveEdgeOffset(program) {
@@ -1823,20 +1655,6 @@ function findNextProgramIndex() {
   return -1
 }
 
-async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts
-  })
-  if (!res.ok) throw new Error(await res.text())
-  if (res.status === 204) return null
-  return res.json()
-}
-
-function asArray(value) {
-  return Array.isArray(value) ? value : []
-}
-
 async function loadPlaylists() {
   playlists.value = asArray(await api('/api/playlists'))
   const existing = new Set(playlists.value.map((p) => p.id))
@@ -2256,6 +2074,7 @@ onMounted(async () => {
   themeMode.value = ['light', 'dark', 'system'].includes(storedThemeMode) ? storedThemeMode : 'system'
   applyTheme(themeMode.value)
   initLanguageMode()
+  loadBrokenLogos()
   if (window.matchMedia) {
     systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     systemThemeMediaQuery.addEventListener?.('change', onSystemThemeChange)
@@ -2318,6 +2137,7 @@ onUnmounted(() => {
     clearTimeout(controlsHideTimer)
     controlsHideTimer = null
   }
+  flushBrokenLogos()
   clearStalledRecoveryTimer()
   clearStartupSlowTimer()
   destroyHls()
