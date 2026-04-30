@@ -927,7 +927,7 @@ function currentPlaybackOffsetSeconds() {
     return Math.max(0, Math.floor(timeshiftOffsetSeconds.value))
   }
   if (playbackAnchor.value.active) {
-    const elapsed = Math.floor((nowTickMs.value - playbackAnchor.value.startedAtMs) / 1000)
+    const elapsed = Math.floor((Date.now() - playbackAnchor.value.startedAtMs) / 1000)
     const offset = playbackAnchor.value.baseOffsetSeconds + (elapsed > 0 ? elapsed : 0)
     return Math.max(0, offset)
   }
@@ -1374,12 +1374,14 @@ function revealControls() {
 
 function onVideoPlay() {
   isPlaying.value = true
+  resumePlaybackTracking()
   clearStalledRecoveryTimer()
   finishStartupOverlay()
   scheduleControlsHide()
 }
 
 function onVideoPause() {
+  pausePlaybackTracking()
   isPlaying.value = false
   controlsVisible.value = true
   if (controlsHideTimer) {
@@ -1413,6 +1415,7 @@ function onVideoVolumeChange() {
 }
 
 function onVideoTimeUpdate() {
+  syncTimeshiftFromPlayback()
   updateHlsDebugFromVideo()
 }
 
@@ -1616,6 +1619,26 @@ function startPlaybackTracking(offsetSeconds) {
     baseOffsetSeconds: Math.max(0, Math.floor(offsetSeconds)),
     startedAtMs: Date.now()
   }
+}
+
+function pausePlaybackTracking() {
+  if (!archiveSupported.value || !selectedProgram.value || timeshiftDragging.value) return
+  if (!playbackAnchor.value.active) return
+
+  const offset = Math.min(currentPlaybackOffsetSeconds(), currentLiveEdgeOffset(selectedProgram.value))
+  timeshiftOffsetSeconds.value = Math.max(0, Math.floor(offset))
+  playbackAnchor.value = {
+    active: false,
+    baseOffsetSeconds: timeshiftOffsetSeconds.value,
+    startedAtMs: 0
+  }
+}
+
+function resumePlaybackTracking() {
+  if (!archiveSupported.value || !selectedProgram.value || timeshiftDragging.value) return
+  if (playbackAnchor.value.active) return
+
+  startPlaybackTracking(timeshiftOffsetSeconds.value)
 }
 
 function stopPlaybackTracking() {
