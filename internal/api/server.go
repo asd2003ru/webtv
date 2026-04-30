@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -66,6 +67,7 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/healthz", s.health)
 	s.mux.HandleFunc("/readyz", s.ready)
 	s.mux.HandleFunc("/api/config", s.uiConfig)
+	s.mux.HandleFunc("/api/logo", s.logoProxy)
 	s.mux.HandleFunc("/api/playlists", s.playlists)
 	s.mux.HandleFunc("/api/playlists/", s.playlistsSub)
 	s.mux.HandleFunc("/api/channels/", s.channelsSub)
@@ -92,6 +94,49 @@ func (s *Server) uiConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"app_title": s.appTitle,
 	})
+}
+
+func (s *Server) logoProxy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	src := strings.TrimSpace(r.URL.Query().Get("src"))
+	u, err := url.Parse(src)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		writeErr(w, errors.New("invalid logo src"), http.StatusBadRequest)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, src, nil)
+	if err != nil {
+		writeErr(w, err, http.StatusBadRequest)
+		return
+	}
+	if accept := strings.TrimSpace(r.Header.Get("Accept")); accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	req.Header.Set("User-Agent", "WebTV logo proxy")
+
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		writeErr(w, err, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeErr(w, errors.New(resp.Status), http.StatusBadGateway)
+		return
+	}
+	if ct := strings.TrimSpace(resp.Header.Get("Content-Type")); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (s *Server) playlists(w http.ResponseWriter, r *http.Request) {

@@ -38,7 +38,7 @@
       >
         <img
           v-if="showChannelLogo(c)"
-          :src="c.logo"
+          :src="normalizeLogoUrl(c.logo)"
           :alt="c.name"
           class="channel-logo"
           width="44"
@@ -82,7 +82,7 @@
           >
             <img
               v-if="showChannelLogo(c)"
-              :src="c.logo"
+              :src="normalizeLogoUrl(c.logo)"
               :alt="c.name"
               class="channel-logo"
               width="44"
@@ -117,6 +117,7 @@
 
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { normalizeLogoUrl } from '../utils/channels'
 
 const props = defineProps({
   sidebarOpen: { type: Boolean, required: true },

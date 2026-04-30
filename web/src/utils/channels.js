@@ -3,6 +3,13 @@ export function channelInitial(name) {
   return first ? first.toUpperCase() : 'TV'
 }
 
+export function normalizeLogoUrl(url) {
+  const value = String(url || '').trim()
+  if (typeof window === 'undefined' || window.location.protocol !== 'https:') return value
+  if (!value.toLowerCase().startsWith('http://')) return value
+  return `/api/logo?src=${encodeURIComponent(value)}`
+}
+
 export function fuzzyScore(text, query) {
   const source = String(text || '').toLowerCase()
   const needle = String(query || '').toLowerCase().trim()
