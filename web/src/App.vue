@@ -149,6 +149,7 @@
             :program-key="programKey"
             :is-current-program="isCurrentProgram"
             :is-archive-playing-program="isArchivePlayingProgram"
+            :is-timeshift-playing-program="isTimeshiftPlayingProgram"
             :is-future-program="isFutureProgram"
             :program-description-tooltip="programDescriptionTooltip"
             :format-program-date="formatProgramDate"
@@ -912,6 +913,13 @@ function isArchivePlayingProgram(program) {
   return archiveSupported.value && selectedProgramKey.value === programKey(program) && isPastProgram(program)
 }
 
+function isTimeshiftPlayingProgram(program) {
+  if (!archiveSupported.value || selectedProgramKey.value !== programKey(program)) return false
+  if (!isCurrentProgram(program)) return false
+  const liveEdge = currentLiveEdgeOffset(program)
+  return currentPlaybackOffsetSeconds() < liveEdge - 1
+}
+
 function isCurrentProgram(program) {
   return isProgramCurrent(program, nowTickMs.value)
 }
@@ -930,6 +938,46 @@ function programProgressLabel(program) {
 
 function currentOffsetForProgram(program) {
   return programCurrentOffset(program, nowTickMs.value)
+}
+
+function syncSelectedProgramWithBroadcastTime() {
+  if (!selectedChannel.value || !selectedProgram.value || programs.value.length === 0) return
+  const src = currentVideoSrc.value || video.value?.currentSrc || ''
+  if (isArchiveStreamURL(src)) {
+    const selectedStart = new Date(selectedProgram.value.start_at).getTime()
+    const playbackAtMs = selectedStart + (currentPlaybackOffsetSeconds() * 1000)
+    const playbackProgram = programs.value.find((program) => {
+      const start = new Date(program.start_at).getTime()
+      const end = new Date(program.end_at).getTime()
+      return Number.isFinite(start) && Number.isFinite(end) && start <= playbackAtMs && playbackAtMs < end
+    })
+    if (!playbackProgram || programKey(playbackProgram) === selectedProgramKey.value) return
+
+    const nextStart = new Date(playbackProgram.start_at).getTime()
+    const nextOffset = Math.max(0, Math.floor((playbackAtMs - nextStart) / 1000))
+    selectedProgramKey.value = programKey(playbackProgram)
+    if (isProgramCurrent(playbackProgram, nowTickMs.value)) {
+      nowProgramByChannel.value[selectedChannel.value] = playbackProgram
+    }
+    timeshiftOffsetSeconds.value = Math.min(nextOffset, currentLiveEdgeOffset(playbackProgram))
+    startPlaybackTracking(timeshiftOffsetSeconds.value)
+    return
+  }
+  if (!isPastProgram(selectedProgram.value, nowTickMs.value)) return
+
+  const maxOffset = timeshiftMaxSeconds.value
+  const playbackOffset = currentPlaybackOffsetSeconds()
+  const reachedProgramEnd = maxOffset <= 0 || timeshiftOffsetSeconds.value >= maxOffset - 1 || playbackOffset >= maxOffset - 1
+  if (!reachedProgramEnd) return
+
+  const nowProgram = programs.value.find((program) => isProgramCurrent(program, nowTickMs.value))
+  if (!nowProgram || programKey(nowProgram) === selectedProgramKey.value) return
+
+  selectedProgramKey.value = programKey(nowProgram)
+  nowProgramByChannel.value[selectedChannel.value] = nowProgram
+  const liveOffset = currentLiveEdgeOffset(nowProgram)
+  timeshiftOffsetSeconds.value = liveOffset
+  startPlaybackTracking(liveOffset)
 }
 
 function currentLiveEdgeOffset(program) {
@@ -1031,8 +1079,7 @@ function streamURLForProgram(channelID, program, offsetSeconds = 0) {
   }
   const startAt = new Date(program.start_at)
   const now = new Date()
-  const endAt = new Date(program.end_at)
-  const effectiveEnd = endAt > now ? now : endAt
+  const effectiveEnd = now
   const shiftedStart = new Date(startAt.getTime() + offset * 1000)
   if (shiftedStart >= effectiveEnd) {
     return withStreamOptions(base)
@@ -1436,6 +1483,7 @@ function onVideoVolumeChange() {
 
 function onVideoTimeUpdate() {
   syncTimeshiftFromPlayback()
+  syncSelectedProgramWithBroadcastTime()
   updateHlsDebugFromVideo()
 }
 
@@ -1985,12 +2033,15 @@ async function selectChannel() {
   }
 }
 
-function selectProgram(program) {
+function selectProgram(program, options = {}) {
   if (isFutureProgram(program)) return
   selectedProgramKey.value = programKey(program)
-  const initialOffset = isCurrentProgram(program)
-    ? currentLiveEdgeOffset(program)
-    : 0
+  let initialOffset = 0
+  if (Number.isFinite(options.initialOffset)) {
+    initialOffset = Math.max(0, Math.floor(options.initialOffset))
+  } else if (isCurrentProgram(program)) {
+    initialOffset = currentLiveEdgeOffset(program)
+  }
   timeshiftOffsetSeconds.value = initialOffset
   if (!video.value || !selectedChannel.value) return
 
@@ -2072,7 +2123,7 @@ function onVideoEnded() {
   if (!isCurrentProgram(selectedProgram.value)) {
     const nextIdx = findNextProgramIndex()
     if (nextIdx >= 0) {
-      selectProgram(programs.value[nextIdx])
+      selectProgram(programs.value[nextIdx], { initialOffset: 0 })
       void video.value.play().catch(() => {})
       return
     }
@@ -2155,6 +2206,7 @@ onMounted(async () => {
   playbackTicker = window.setInterval(syncTimeshiftFromPlayback, 1000)
   nowTicker = window.setInterval(() => {
     nowTickMs.value = Date.now()
+    syncSelectedProgramWithBroadcastTime()
   }, 1000)
   revealControls()
   pictureInPictureSupported.value = !!(
@@ -2735,18 +2787,46 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
 .program-time.archive {
   color: #a35f00;
 }
+.program-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff0d6;
+  color: #8f5300;
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+}
 .program-progress {
   display: block;
   margin-top: 6px;
   height: 4px;
   border-radius: 999px;
   background: rgba(46, 109, 170, 0.2);
+  position: relative;
+  overflow: hidden;
 }
-.program-progress-fill {
+.program-progress-fill,
+.program-progress-live {
   display: block;
   height: 100%;
   border-radius: inherit;
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+.program-progress-live {
+  background: rgba(46, 109, 170, 0.22);
+}
+.program-progress-fill {
   background: linear-gradient(90deg, #3d86ca, #2e6daa);
+  z-index: 1;
+}
+.program-progress-fill.archive {
+  background: linear-gradient(90deg, #d88b19, #a35f00);
 }
 .timeshift { margin-top: 10px; padding: 10px; border: 1px solid #d7e0ea; border-radius: 10px; background: #f9fbfe; }
 .timeshift-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; color: #4a5868; font-size: 13px; }

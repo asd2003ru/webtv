@@ -79,13 +79,26 @@
             >
               <span class="program-row">
                 <span class="program-title">[{{ formatProgramDate(p.start_at) }}] {{ p.title }}</span>
-                <span v-if="isCurrentProgram(p)" class="program-time">{{ programProgressLabel(p) }}</span>
-                <span v-else-if="isArchivePlayingProgram(p)" class="program-time archive">{{ selectedProgramProgressLabel }}</span>
+                <span v-if="isTimeshiftPlayingProgram(p)" class="program-time archive">
+                  <span class="program-mode-pill">{{ t('archive') }}</span>
+                  {{ selectedProgramProgressLabel }}
+                </span>
+                <span v-else-if="isCurrentProgram(p)" class="program-time">{{ programProgressLabel(p) }}</span>
+                <span v-else-if="isArchivePlayingProgram(p)" class="program-time archive">
+                  <span class="program-mode-pill">{{ t('archive') }}</span>
+                  {{ selectedProgramProgressLabel }}
+                </span>
               </span>
               <span v-if="isCurrentProgram(p) || isArchivePlayingProgram(p)" class="program-progress">
                 <span
+                  v-if="isTimeshiftPlayingProgram(p)"
+                  class="program-progress-live"
+                  :style="{ width: `${programProgressPercent(p)}%` }"
+                ></span>
+                <span
                   class="program-progress-fill"
-                  :style="{ width: `${isArchivePlayingProgram(p) ? selectedProgramProgressPercent : programProgressPercent(p)}%` }"
+                  :class="{ archive: isArchivePlayingProgram(p) || isTimeshiftPlayingProgram(p) }"
+                  :style="{ width: `${isArchivePlayingProgram(p) || isTimeshiftPlayingProgram(p) ? selectedProgramProgressPercent : programProgressPercent(p)}%` }"
                 ></span>
               </span>
             </button>
@@ -129,6 +142,7 @@ const props = defineProps({
   programKey: { type: Function, required: true },
   isCurrentProgram: { type: Function, required: true },
   isArchivePlayingProgram: { type: Function, required: true },
+  isTimeshiftPlayingProgram: { type: Function, required: true },
   isFutureProgram: { type: Function, required: true },
   programDescriptionTooltip: { type: Function, required: true },
   formatProgramDate: { type: Function, required: true },
