@@ -8,13 +8,14 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"webtv/internal/api"
-	"webtv/internal/config"
-	"webtv/internal/logx"
-	"webtv/internal/scheduler"
-	"webtv/internal/storage"
-	"webtv/internal/stream"
-	"webtv/internal/webui"
+
+	"github.com/asd2003ru/webtv/internal/api"
+	"github.com/asd2003ru/webtv/internal/config"
+	"github.com/asd2003ru/webtv/internal/logx"
+	"github.com/asd2003ru/webtv/internal/scheduler"
+	"github.com/asd2003ru/webtv/internal/storage"
+	"github.com/asd2003ru/webtv/internal/stream"
+	"github.com/asd2003ru/webtv/internal/webui"
 )
 
 func main() {

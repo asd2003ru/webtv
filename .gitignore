@@ -8,6 +8,7 @@ promt.md
 # Build outputs
 /bin/
 /webtv
+*_test.go
 
 # Frontend artifacts
 web/node_modules/

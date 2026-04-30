@@ -12,11 +12,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"webtv/internal/logx"
-	"webtv/internal/model"
-	"webtv/internal/scheduler"
-	"webtv/internal/storage"
-	"webtv/internal/stream"
+
+	"github.com/asd2003ru/webtv/internal/logx"
+	"github.com/asd2003ru/webtv/internal/model"
+	"github.com/asd2003ru/webtv/internal/scheduler"
+	"github.com/asd2003ru/webtv/internal/storage"
+	"github.com/asd2003ru/webtv/internal/stream"
 )
 
 var lastStreamChannelByClient sync.Map

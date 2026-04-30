@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"webtv/internal/model"
+
+	"github.com/asd2003ru/webtv/internal/model"
 
 	_ "modernc.org/sqlite"
 )

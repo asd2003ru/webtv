@@ -7,11 +7,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"webtv/internal/epg"
-	"webtv/internal/logx"
-	"webtv/internal/model"
-	"webtv/internal/playlist"
-	"webtv/internal/storage"
+
+	"github.com/asd2003ru/webtv/internal/epg"
+	"github.com/asd2003ru/webtv/internal/logx"
+	"github.com/asd2003ru/webtv/internal/model"
+	"github.com/asd2003ru/webtv/internal/playlist"
+	"github.com/asd2003ru/webtv/internal/storage"
 )
 
 type SyncService struct {

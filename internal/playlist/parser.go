@@ -5,7 +5,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"webtv/internal/model"
+
+	"github.com/asd2003ru/webtv/internal/model"
 )
 
 type ParsedChannel struct {

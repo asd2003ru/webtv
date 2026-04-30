@@ -1,4 +1,4 @@
-module webtv
+module github.com/asd2003ru/webtv
 
 go 1.26.2
 

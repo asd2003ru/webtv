@@ -15,7 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"webtv/internal/logx"
+
+	"github.com/asd2003ru/webtv/internal/logx"
 )
 
 type Mode string
