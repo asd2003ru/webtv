@@ -6,6 +6,7 @@ on:
       - "v*.*.*"
 
 permissions:
+  actions: read
   contents: write
   packages: write
 
@@ -73,6 +74,7 @@ jobs:
       - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: webtv-${{ github.ref_name }}-*
           path: dist
           merge-multiple: true
 
@@ -95,6 +97,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
