@@ -20,7 +20,4 @@ services:
       WEBTV_STREAM_MODE_CACHE_TTL_MIN: ${WEBTV_STREAM_MODE_CACHE_TTL_MIN:-360}
       WEBTV_STREAM_MANIFEST_BACKOFF_ENABLED: ${WEBTV_STREAM_MANIFEST_BACKOFF_ENABLED:-false}
     volumes:
-      - webtv-data:/data
-
-volumes:
-  webtv-data:
+      - ./data:/data

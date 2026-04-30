@@ -44,7 +44,7 @@ Configuration is done with environment variables.
 | Variable | Default | Description |
 | --- | --- | --- |
 | `WEBTV_ADDR` | `:8080` | HTTP listen address. Use values like `:8080` or `127.0.0.1:8080`. |
-| `WEBTV_DB_PATH` | `webtv.db` | SQLite database path. In Docker this should usually stay under `/data`, for example `/data/webtv.db`. |
+| `WEBTV_DB_PATH` | `webtv.db` | SQLite database file path. In Docker Compose the default is `/data/webtv.db`, with `/data` mounted to the local `./data` directory. |
 | `WEBTV_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, or `error`. |
 | `WEBTV_APP_TITLE` | `WebTV` | Title shown in the web UI header. |
 | `WEBTV_SINGLE_CONN_POLICY` | `reject` | Historical stream connection policy option. Current stream handling allows browser retry/reopen behavior, so this is mostly kept for compatibility. |
@@ -80,7 +80,7 @@ Then open:
 http://localhost:8080
 ```
 
-Data is stored in the named Docker volume `webtv-data`.
+Data is stored in the local `./data` directory next to `docker-compose.yaml`. WebTV creates `data/webtv.db` automatically on first start.
 
 Minimal one-command run:
 
@@ -89,7 +89,7 @@ docker run -d \
   --name webtv \
   --restart unless-stopped \
   -p 8080:8080 \
-  -v webtv-data:/data \
+  -v ./data:/data \
   ghcr.io/asd2003ru/webtv:latest
 ```
 
@@ -99,7 +99,7 @@ Download or build the `webtv` binary, then run it:
 
 ```bash
 WEBTV_ADDR=:8080 \
-WEBTV_DB_PATH=./webtv.db \
+WEBTV_DB_PATH=./data/webtv.db \
 WEBTV_FFMPEG_BIN=ffmpeg \
 ./webtv
 ```
