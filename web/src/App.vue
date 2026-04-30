@@ -138,8 +138,8 @@
             :stream-mode-display="streamModeDisplay"
             :stream-mode="streamMode"
             :archive-supported="archiveSupported"
-            :selected-program="selectedProgram"
             :selected-program-progress-label="selectedProgramProgressLabel"
+            :selected-program-progress-percent="selectedProgramProgressPercent"
             :audio-track-options="audioTrackOptions"
             :selected-audio-track="selectedAudioTrack"
             :deinterlace-enabled="deinterlaceEnabled"
@@ -153,6 +153,7 @@
             :program-description-tooltip="programDescriptionTooltip"
             :format-program-date="formatProgramDate"
             :program-progress-percent="programProgressPercent"
+            :program-progress-label="programProgressLabel"
             :on-select-program="selectProgram"
             :on-toggle-deinterlace="toggleDeinterlace"
             :on-select-audio-track="onSelectAudioTrack"
@@ -219,7 +220,7 @@ import {
   formatOffset,
   formatProgramDate,
   formatSyncDateTime,
-  isCurrentProgram,
+  isCurrentProgram as isProgramCurrent,
   isFutureProgram,
   isPastProgram,
   programDescriptionTooltip,
@@ -405,6 +406,13 @@ const selectedProgramProgressLabel = computed(() => {
     ? Math.min(Math.max(0, Math.floor(timeshiftOffsetSeconds.value)), timeshiftMaxSeconds.value)
     : Math.min(currentOffsetForProgram(selectedProgram.value), timeshiftMaxSeconds.value)
   return `${formatOffset(elapsed)} / ${timeshiftMaxLabel.value}`
+})
+const selectedProgramProgressPercent = computed(() => {
+  if (!selectedProgram.value || timeshiftMaxSeconds.value <= 0) return 0
+  const elapsed = archiveSupported.value
+    ? Math.min(Math.max(0, Math.floor(timeshiftOffsetSeconds.value)), timeshiftMaxSeconds.value)
+    : Math.min(currentOffsetForProgram(selectedProgram.value), timeshiftMaxSeconds.value)
+  return Math.round((elapsed / timeshiftMaxSeconds.value) * 100)
 })
 const currentVideoFitMode = computed(() => {
   const key = currentVideoFitStorageKey()
@@ -904,8 +912,20 @@ function isArchivePlayingProgram(program) {
   return archiveSupported.value && selectedProgramKey.value === programKey(program) && isPastProgram(program)
 }
 
+function isCurrentProgram(program) {
+  return isProgramCurrent(program, nowTickMs.value)
+}
+
 function programProgressPercent(program) {
   return calculateProgramProgressPercent(program, nowTickMs.value)
+}
+
+function programProgressLabel(program) {
+  const start = new Date(program.start_at).getTime()
+  const end = new Date(program.end_at).getTime()
+  const duration = Math.max(0, Math.floor((end - start) / 1000))
+  const elapsed = Math.min(currentOffsetForProgram(program), duration)
+  return `${formatOffset(elapsed)} / ${formatOffset(duration)}`
 }
 
 function currentOffsetForProgram(program) {
@@ -2694,6 +2714,27 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
 .program-item.current button { border-color: #2e6daa; background: #eef6ff; font-weight: 700; }
 .program-item.selected button { box-shadow: inset 0 0 0 1px #2e6daa; }
 .program-item.archive-playing button { border-color: #bf6f00; background: #fff3dc; box-shadow: inset 0 0 0 1px #bf6f00; }
+.program-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.program-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.program-time {
+  flex: 0 0 auto;
+  color: #2e6daa;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.program-time.archive {
+  color: #a35f00;
+}
 .program-progress {
   display: block;
   margin-top: 6px;
@@ -2723,6 +2764,15 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
   .channel-sidebar { max-height: none; margin-top: 0; }
   .playlist-switcher { align-items: flex-start; }
   .settings-channel-groups { max-height: 50vh; }
+}
+@media (max-width: 560px) {
+  .program-row {
+    display: block;
+  }
+  .program-time {
+    display: block;
+    margin-top: 4px;
+  }
 }
 @media (min-width: 981px) {
   .group-channels {

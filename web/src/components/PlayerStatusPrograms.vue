@@ -36,12 +36,6 @@
       </svg>
       <span>{{ archiveSupported ? t('archive') : t('no_archive') }}</span>
     </div>
-    <div v-if="selectedProgram" class="status-badge" :title="t('program_time_progress_title')">
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 2a10 10 0 1 0 10 10h-2a8 8 0 1 1-8-8V2zm1 5h-2v6l5 3 1-1.73-4-2.27z" />
-      </svg>
-      <span>{{ selectedProgramProgressLabel }}</span>
-    </div>
     <button
       v-if="streamMode === 'transcode'"
       type="button"
@@ -83,9 +77,16 @@
               :title="programDescriptionTooltip(p)"
               @click="onSelectProgram(p)"
             >
-              [{{ formatProgramDate(p.start_at) }}] {{ p.title }}
-              <span v-if="isCurrentProgram(p)" class="program-progress">
-                <span class="program-progress-fill" :style="{ width: `${programProgressPercent(p)}%` }"></span>
+              <span class="program-row">
+                <span class="program-title">[{{ formatProgramDate(p.start_at) }}] {{ p.title }}</span>
+                <span v-if="isCurrentProgram(p)" class="program-time">{{ programProgressLabel(p) }}</span>
+                <span v-else-if="isArchivePlayingProgram(p)" class="program-time archive">{{ selectedProgramProgressLabel }}</span>
+              </span>
+              <span v-if="isCurrentProgram(p) || isArchivePlayingProgram(p)" class="program-progress">
+                <span
+                  class="program-progress-fill"
+                  :style="{ width: `${isArchivePlayingProgram(p) ? selectedProgramProgressPercent : programProgressPercent(p)}%` }"
+                ></span>
               </span>
             </button>
           </li>
@@ -117,8 +118,8 @@ const props = defineProps({
   streamModeDisplay: { type: Function, required: true },
   streamMode: { type: String, required: true },
   archiveSupported: { type: Boolean, required: true },
-  selectedProgram: { type: Object, default: null },
   selectedProgramProgressLabel: { type: String, required: true },
+  selectedProgramProgressPercent: { type: Number, required: true },
   audioTrackOptions: { type: Array, required: true },
   selectedAudioTrack: { type: Number, required: true },
   deinterlaceEnabled: { type: Boolean, required: true },
@@ -132,6 +133,7 @@ const props = defineProps({
   programDescriptionTooltip: { type: Function, required: true },
   formatProgramDate: { type: Function, required: true },
   programProgressPercent: { type: Function, required: true },
+  programProgressLabel: { type: Function, required: true },
   onSelectProgram: { type: Function, required: true },
   onToggleDeinterlace: { type: Function, required: true },
   onSelectAudioTrack: { type: Function, required: true }
