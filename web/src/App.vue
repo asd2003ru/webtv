@@ -1833,8 +1833,12 @@ async function api(path, opts = {}) {
   return res.json()
 }
 
+function asArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
 async function loadPlaylists() {
-  playlists.value = await api('/api/playlists')
+  playlists.value = asArray(await api('/api/playlists'))
   const existing = new Set(playlists.value.map((p) => p.id))
   visibleCountByPlaylist.value = Object.fromEntries(
     Object.entries(visibleCountByPlaylist.value).filter(([id]) => existing.has(Number(id)))
@@ -1948,7 +1952,7 @@ async function loadChannels() {
     return
   }
 
-  const firstPage = await api(`/api/playlists/${selectedPlaylist.value}/channels?limit=${pageSize}&offset=0`)
+  const firstPage = asArray(await api(`/api/playlists/${selectedPlaylist.value}/channels?limit=${pageSize}&offset=0`))
   if (token !== nowProgramsRequestToken) return
   channels.value = firstPage
   if (selectedChannel.value && !channels.value.some((c) => c.id === selectedChannel.value) && prevSelectedExternalID) {
@@ -1984,7 +1988,7 @@ async function loadRemainingChannelsInBackground(playlistID, offset, pageSize, t
   let nextOffset = offset
   try {
     while (token === nowProgramsRequestToken) {
-      const page = await api(`/api/playlists/${playlistID}/channels?limit=${pageSize}&offset=${nextOffset}`)
+      const page = asArray(await api(`/api/playlists/${playlistID}/channels?limit=${pageSize}&offset=${nextOffset}`))
       if (token !== nowProgramsRequestToken) return
       if (!Array.isArray(page) || page.length === 0) return
       channels.value = channels.value.concat(page)
@@ -2000,7 +2004,7 @@ async function loadRemainingChannelsInBackground(playlistID, offset, pageSize, t
 async function loadNowProgramsInBackground(playlistID, token) {
   if (!playlistID) return
   try {
-    const items = await api(`/api/playlists/${playlistID}/now-programs`)
+    const items = asArray(await api(`/api/playlists/${playlistID}/now-programs`))
     if (token !== nowProgramsRequestToken) return
     const nextNowByChannel = {}
     const nextFavoriteNowByKey = { ...favoriteNowProgramByKey.value }
@@ -2028,7 +2032,7 @@ async function loadFavoriteNowPrograms() {
   const next = {}
   await Promise.all(playlistIDs.map(async (playlistID) => {
     try {
-      const items = await api(`/api/playlists/${playlistID}/now-programs`)
+      const items = asArray(await api(`/api/playlists/${playlistID}/now-programs`))
       if (token !== favoriteNowProgramsRequestToken) return
       for (const now of items) {
         next[favoriteKey(playlistID, now.channel_id)] = now
@@ -2094,7 +2098,7 @@ async function selectChannel() {
     from: from.toISOString(),
     to: to.toISOString()
   })
-  programs.value = await api(`/api/channels/${selectedChannel.value}/epg?${params.toString()}`)
+  programs.value = asArray(await api(`/api/channels/${selectedChannel.value}/epg?${params.toString()}`))
   if (token !== channelSelectRequestToken) return
   const freshNowHint = await fetchNowProgramForChannel(selectedPlaylist.value, selectedChannel.value)
   if (token !== channelSelectRequestToken) return

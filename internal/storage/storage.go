@@ -141,7 +141,7 @@ ORDER BY p.id`)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Playlist
+	out := make([]model.Playlist, 0)
 	for rows.Next() {
 		var p model.Playlist
 		var enabled int
@@ -261,7 +261,7 @@ func (s *Store) ListChannelsByPlaylist(ctx context.Context, playlistID int64) ([
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Channel
+	out := make([]model.Channel, 0)
 	for rows.Next() {
 		var c model.Channel
 		var archived int
@@ -297,7 +297,7 @@ LIMIT ? OFFSET ?`, playlistID, limit, offset)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Channel
+	out := make([]model.Channel, 0)
 	for rows.Next() {
 		var c model.Channel
 		var archived int
@@ -445,7 +445,7 @@ func (s *Store) GetProgramsByWindow(ctx context.Context, channelID int64, from, 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []model.Program
+	out := make([]model.Program, 0)
 	for rows.Next() {
 		var p model.Program
 		var start, end string
@@ -482,7 +482,7 @@ ORDER BY p.channel_id
 	}
 	defer rows.Close()
 
-	var out []model.Program
+	out := make([]model.Program, 0)
 	for rows.Next() {
 		var p model.Program
 		var start, end string
