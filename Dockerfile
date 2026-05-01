@@ -13,12 +13,13 @@ RUN npm run build
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS go-build
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
+ARG WEBTV_VERSION=dev
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web-build /app/internal/webui/dist ./internal/webui/dist
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/webtv ./cmd/webtv
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-X github.com/asd2003ru/webtv/internal/version.Version=${WEBTV_VERSION}" -o /out/webtv ./cmd/webtv
 
 FROM alpine:3.21
 WORKDIR /app

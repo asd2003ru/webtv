@@ -187,6 +187,22 @@
 
       </div>
     </section>
+
+    <footer class="app-footer">
+      <span>{{ appVersion }}</span>
+      <a
+        class="github-link"
+        :href="repositoryUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="GitHub"
+        title="GitHub"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5v-1.74c-2.78.62-3.37-1.37-3.37-1.37-.45-1.19-1.11-1.5-1.11-1.5-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.56 2.34 1.11 2.91.85.09-.67.35-1.11.63-1.37-2.22-.26-4.55-1.14-4.55-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05A9.3 9.3 0 0 1 12 6.96c.85 0 1.7.12 2.5.34 1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.81-4.56 5.07.36.32.68.94.68 1.9v2.8c0 .28.18.6.69.5A10.13 10.13 0 0 0 22 12.25C22 6.58 17.52 2 12 2z" />
+        </svg>
+      </a>
+    </footer>
   </main>
 </template>
 
@@ -231,6 +247,8 @@ import {
 
 const tab = ref('player')
 const appTitle = ref('WebTV')
+const appVersion = ref('dev')
+const repositoryUrl = ref('https://github.com/asd2003ru/webtv')
 const playlists = ref([])
 const channels = ref([])
 const programs = ref([])
@@ -1826,9 +1844,15 @@ async function loadAppConfig() {
   try {
     const cfg = await api('/api/config')
     const nextTitle = typeof cfg?.app_title === 'string' ? cfg.app_title.trim() : ''
+    const nextVersion = typeof cfg?.version === 'string' ? cfg.version.trim() : ''
+    const nextRepositoryUrl = typeof cfg?.repository_url === 'string' ? cfg.repository_url.trim() : ''
     appTitle.value = nextTitle || 'WebTV'
+    appVersion.value = nextVersion || 'dev'
+    repositoryUrl.value = nextRepositoryUrl || 'https://github.com/asd2003ru/webtv'
   } catch {
     appTitle.value = 'WebTV'
+    appVersion.value = 'dev'
+    repositoryUrl.value = 'https://github.com/asd2003ru/webtv'
   }
 }
 
@@ -2373,6 +2397,35 @@ html, body, #app { min-height: 100%; }
 body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--bg-page-from), var(--bg-page-to)); color: var(--text-main); }
 .layout { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 0 2px;
+  color: var(--muted-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  color: var(--muted-text);
+  text-decoration: none;
+}
+.github-link:hover {
+  color: #2e6daa;
+  background: color-mix(in srgb, var(--btn-hover) 78%, transparent);
+}
+.github-link svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
 .settings-btn {
   width: 38px;
   height: 38px;

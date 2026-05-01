@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        WEBTV_VERSION: ${WEBTV_VERSION:-dev}
     image: webtv:latest
     container_name: webtv
     restart: unless-stopped

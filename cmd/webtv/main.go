@@ -15,6 +15,7 @@ import (
 	"github.com/asd2003ru/webtv/internal/scheduler"
 	"github.com/asd2003ru/webtv/internal/storage"
 	"github.com/asd2003ru/webtv/internal/stream"
+	"github.com/asd2003ru/webtv/internal/version"
 	"github.com/asd2003ru/webtv/internal/webui"
 )
 
@@ -22,6 +23,7 @@ func main() {
 	cfg := config.Load()
 	level := logx.SetLevelFromString(cfg.LogLevel)
 	logx.Infof("log level=%s", logx.LevelString(level))
+	logx.Infof("webtv version=%s", version.Version)
 
 	store, err := storage.New(cfg.DBPath)
 	if err != nil {

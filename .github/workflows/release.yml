@@ -54,9 +54,10 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          WEBTV_VERSION: ${{ github.ref_name }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/webtv" ./cmd/webtv
+          go build -trimpath -ldflags="-s -w -X github.com/asd2003ru/webtv/internal/version.Version=${WEBTV_VERSION}" -o "dist/webtv" ./cmd/webtv
           tar -C dist -czf "dist/webtv-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" webtv
           rm dist/webtv
 
@@ -135,3 +136,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            WEBTV_VERSION=${{ github.ref_name }}

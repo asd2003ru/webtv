@@ -19,6 +19,7 @@ import (
 	"github.com/asd2003ru/webtv/internal/scheduler"
 	"github.com/asd2003ru/webtv/internal/storage"
 	"github.com/asd2003ru/webtv/internal/stream"
+	"github.com/asd2003ru/webtv/internal/version"
 )
 
 var lastStreamChannelByClient sync.Map
@@ -92,7 +93,9 @@ func (s *Server) uiConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"app_title": s.appTitle,
+		"app_title":      s.appTitle,
+		"version":        version.Version,
+		"repository_url": version.RepositoryURL,
 	})
 }
 
