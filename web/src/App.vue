@@ -350,6 +350,7 @@ const playbackAnchor = ref({
   baseOffsetSeconds: 0,
   startedAtMs: 0
 })
+let timeshiftApplyToken = 0
 const videoFitModes = ['contain', 'cover', 'fill']
 const videoFitByChannel = ref({})
 const timeshiftDragging = ref(false)
@@ -2141,13 +2142,29 @@ function onTimeshiftInput(event) {
 }
 
 async function applyTimeshift() {
-  timeshiftDragging.value = false
-  if (!selectedProgram.value || !video.value || !selectedChannel.value) return
-  let streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, timeshiftOffsetSeconds.value)
+  if (!selectedProgram.value || !video.value || !selectedChannel.value) {
+    timeshiftDragging.value = false
+    return
+  }
+  const token = ++timeshiftApplyToken
+  const cap = currentLiveEdgeOffset(selectedProgram.value)
+  const requestedOffset = Math.min(
+    cap,
+    Math.max(0, Math.floor(timeshiftOffsetSeconds.value))
+  )
+  timeshiftOffsetSeconds.value = requestedOffset
+  timeshiftDragging.value = true
+  stopPlaybackTracking()
+
+  let streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, requestedOffset)
   await prepareStreamModeForURL(streamURL)
-  streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, timeshiftOffsetSeconds.value)
+  if (token !== timeshiftApplyToken) return
+
+  streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, requestedOffset)
+  timeshiftOffsetSeconds.value = requestedOffset
   playVideoSource(streamURL)
-  startPlaybackTracking(timeshiftOffsetSeconds.value)
+  startPlaybackTracking(requestedOffset)
+  timeshiftDragging.value = false
 }
 
 function seekBySeconds(delta) {
