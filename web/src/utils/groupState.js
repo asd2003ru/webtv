@@ -10,7 +10,7 @@ export function setGroupStateForPlaylist(storageKey, playlistID, state) {
 }
 
 export function mergeGroupState(defaultState, savedState, fallbackOpen) {
-  const next = {}
+  const next = savedState && typeof savedState === 'object' ? { ...savedState } : {}
   for (const name of Object.keys(defaultState)) {
     if (savedState && Object.prototype.hasOwnProperty.call(savedState, name)) {
       next[name] = savedState[name] !== false

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -39,6 +40,12 @@ type hiddenPrefsPayload struct {
 	Channels []string `json:"channels"`
 }
 
+type favoritePayload struct {
+	PlaylistID        int64  `json:"playlist_id"`
+	ChannelID         int64  `json:"channel_id"`
+	ChannelExternalID string `json:"channel_external_id"`
+}
+
 func New(store *storage.Store, syncer *scheduler.SyncService, streamMgr *stream.Manager, staticFS http.Handler, streamModeCacheTTL time.Duration) *Server {
 	return NewWithAppTitle(store, syncer, streamMgr, staticFS, streamModeCacheTTL, "WebTV")
 }
@@ -69,6 +76,7 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/readyz", s.ready)
 	s.mux.HandleFunc("/api/config", s.uiConfig)
 	s.mux.HandleFunc("/api/logo", s.logoProxy)
+	s.mux.HandleFunc("/api/favorites", s.favorites)
 	s.mux.HandleFunc("/api/playlists", s.playlists)
 	s.mux.HandleFunc("/api/playlists/", s.playlistsSub)
 	s.mux.HandleFunc("/api/channels/", s.channelsSub)
@@ -140,6 +148,68 @@ func (s *Server) logoProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func (s *Server) favorites(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		items, err := s.store.ListFavorites(r.Context())
+		if err != nil {
+			writeErr(w, err, 500)
+			return
+		}
+		writeJSON(w, 200, items)
+	case http.MethodPost:
+		playlistID, externalID, ok := s.favoriteTarget(w, r)
+		if !ok {
+			return
+		}
+		if err := s.store.AddFavorite(r.Context(), playlistID, externalID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, errors.New("favorite channel not found"), http.StatusNotFound)
+				return
+			}
+			writeErr(w, err, 500)
+			return
+		}
+		logx.Infof("favorite added playlist=%d channel_external_id=%q", playlistID, externalID)
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		playlistID, externalID, ok := s.favoriteTarget(w, r)
+		if !ok {
+			return
+		}
+		if err := s.store.RemoveFavorite(r.Context(), playlistID, externalID); err != nil {
+			writeErr(w, err, 500)
+			return
+		}
+		logx.Infof("favorite removed playlist=%d channel_external_id=%q", playlistID, externalID)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) favoriteTarget(w http.ResponseWriter, r *http.Request) (int64, string, bool) {
+	var payload favoritePayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		writeErr(w, err, 400)
+		return 0, "", false
+	}
+	if payload.ChannelID > 0 {
+		ch, err := s.store.GetChannel(r.Context(), payload.ChannelID)
+		if err != nil {
+			writeErr(w, err, 404)
+			return 0, "", false
+		}
+		return ch.PlaylistID, ch.ExternalID, true
+	}
+	externalID := strings.TrimSpace(payload.ChannelExternalID)
+	if payload.PlaylistID <= 0 || externalID == "" {
+		writeErr(w, errors.New("playlist_id and channel_external_id are required"), 400)
+		return 0, "", false
+	}
+	return payload.PlaylistID, externalID, true
 }
 
 func (s *Server) playlists(w http.ResponseWriter, r *http.Request) {

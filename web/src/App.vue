@@ -110,6 +110,7 @@
             :timeshift-max-label="timeshiftMaxLabel"
             :show-debug-overlay="showDebugOverlay"
             :hls-debug="hlsDebug"
+            :t="t"
             :on-video-metadata="onVideoMetadata"
             :on-video-ended="onVideoEnded"
             :on-video-play="onVideoPlay"
@@ -337,6 +338,7 @@ const {
   showChannelLogo,
   markLogoError,
   loadBrokenLogos,
+  clearLogoCaches,
   flushBrokenLogos
 } = useBrokenLogoCache()
 const hlsDebug = ref({
@@ -369,6 +371,8 @@ const playbackAnchor = ref({
   startedAtMs: 0
 })
 let timeshiftApplyToken = 0
+const liveEdgeSwitchToleranceSeconds = 2
+let pausedPlaybackResume = null
 const videoFitModes = ['contain', 'cover', 'fill']
 const videoFitByChannel = ref({})
 const timeshiftDragging = ref(false)
@@ -490,6 +494,41 @@ const OPEN_GROUPS_STORAGE_KEY = 'webtv_open_groups_by_playlist_v1'
 const SETTINGS_OPEN_GROUPS_STORAGE_KEY = 'webtv_settings_open_groups_by_playlist_v1'
 const AUDIO_TRACK_PREFS_STORAGE_KEY = 'webtv_audio_track_by_channel_v1'
 const DEFAULT_AUDIO_LANGUAGE_STORAGE_KEY = 'webtv_default_audio_language_v1'
+const PLAYLIST_SYNC_STATE_STORAGE_KEY = 'webtv_playlist_sync_state_v1'
+
+function readPlaylistSyncState() {
+  try {
+    const raw = localStorage.getItem(PLAYLIST_SYNC_STATE_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : {}
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writePlaylistSyncState(state) {
+  try {
+    localStorage.setItem(PLAYLIST_SYNC_STATE_STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    // Cache invalidation should not break playlist loading.
+  }
+}
+
+function syncStateFromPlaylists(items) {
+  return Object.fromEntries(items.map((p) => [p.id, p.last_sync_at || '']))
+}
+
+function handlePlaylistSyncChanges(items) {
+  const previous = readPlaylistSyncState()
+  const next = syncStateFromPlaylists(items)
+  const changed = Object.entries(next).some(([id, syncedAt]) => {
+    return syncedAt && previous[id] && previous[id] !== syncedAt
+  })
+  writePlaylistSyncState(next)
+  if (changed) {
+    void clearLogoCaches()
+  }
+}
 
 function saveOpenGroupsForPlaylist() {
   setGroupStateForPlaylist(OPEN_GROUPS_STORAGE_KEY, selectedPlaylist.value, openGroups.value)
@@ -497,6 +536,56 @@ function saveOpenGroupsForPlaylist() {
 
 function saveSettingsOpenGroupsForPlaylist() {
   setGroupStateForPlaylist(SETTINGS_OPEN_GROUPS_STORAGE_KEY, selectedPlaylist.value, settingsOpenGroups.value)
+}
+
+function groupNameForChannel(channel) {
+  return channel?.group || 'Без группы'
+}
+
+function saveLastSelectedChannel(channel = null) {
+  if (!selectedChannel.value) return
+  localStorage.setItem('webtv_last_channel', selectedChannel.value)
+  const selected = channel || channels.value.find((c) => c.id === selectedChannel.value)
+  if (selected) {
+    localStorage.setItem('webtv_last_channel_external_id', selected.external_id || '')
+  }
+}
+
+function openGroupForChannel(channel, { persist = false } = {}) {
+  if (!channel) return
+  const groupName = groupNameForChannel(channel)
+  if (openGroups.value[groupName] === true) return
+  openGroups.value[groupName] = true
+  if (persist) {
+    saveOpenGroupsForPlaylist()
+  }
+}
+
+function openSelectedChannelGroup({ persist = false } = {}) {
+  if (!selectedChannel.value) return
+  openGroupForChannel(channels.value.find((c) => c.id === selectedChannel.value), { persist })
+}
+
+function ensureGroupStateForChannels(list, { persist = false } = {}) {
+  let openChanged = false
+  let settingsChanged = false
+  for (const channel of list) {
+    const groupName = groupNameForChannel(channel)
+    if (!Object.prototype.hasOwnProperty.call(openGroups.value, groupName)) {
+      openGroups.value[groupName] = false
+      openChanged = true
+    }
+    if (!Object.prototype.hasOwnProperty.call(settingsOpenGroups.value, groupName)) {
+      settingsOpenGroups.value[groupName] = true
+      settingsChanged = true
+    }
+  }
+  if (persist && openChanged) {
+    saveOpenGroupsForPlaylist()
+  }
+  if (persist && settingsChanged) {
+    saveSettingsOpenGroupsForPlaylist()
+  }
 }
 
 function videoFitChannelKey(playlistID, channelID) {
@@ -530,24 +619,14 @@ function currentVideoFitStorageKey() {
   return `ch:${selectedChannel.value}`
 }
 
-function loadFavorites() {
-  try {
-    const raw = localStorage.getItem('webtv_favorites_v1')
-    const parsed = raw ? JSON.parse(raw) : []
-    if (!Array.isArray(parsed)) return
-    favorites.value = parsed
-      .filter((item) => item && item.playlist_id && (item.id || item.external_id))
-      .map((item) => ({
-        ...item,
-        external_id: item.external_id || ''
-      }))
-  } catch {
-    favorites.value = []
-  }
-}
-
-function saveFavorites() {
-  localStorage.setItem('webtv_favorites_v1', JSON.stringify(favorites.value))
+async function loadFavorites() {
+  const items = asArray(await api('/api/favorites'))
+  favorites.value = items
+    .filter((item) => item && item.playlist_id && item.id && item.external_id)
+    .map((item) => ({
+      ...item,
+      external_id: item.external_id || ''
+    }))
 }
 
 async function loadHiddenItems() {
@@ -786,7 +865,6 @@ function pruneFavoritesByPlaylists() {
   const next = favorites.value.filter((item) => existing.has(item.playlist_id))
   if (next.length !== favorites.value.length) {
     favorites.value = next
-    saveFavorites()
   }
 }
 
@@ -799,7 +877,7 @@ function isFavorite(playlistID, channelID) {
   return favorites.value.some((item) => favoriteKey(item.playlist_id, item.id) === key)
 }
 
-function toggleFavorite(channel) {
+async function toggleFavorite(channel) {
   const idx = favorites.value.findIndex((item) => {
     if (channel.external_id && item.external_id) {
       return item.playlist_id === channel.playlist_id && item.external_id === channel.external_id
@@ -807,20 +885,24 @@ function toggleFavorite(channel) {
     return favoriteKey(item.playlist_id, item.id) === favoriteKey(channel.playlist_id, channel.id)
   })
   if (idx >= 0) {
-    favorites.value.splice(idx, 1)
-    saveFavorites()
+    await api('/api/favorites', {
+      method: 'DELETE',
+      body: JSON.stringify({
+        playlist_id: channel.playlist_id,
+        channel_id: channel.id,
+        channel_external_id: channel.external_id || ''
+      })
+    })
+    await loadFavorites()
     return
   }
-  favorites.value.push({
-    id: channel.id,
-    playlist_id: channel.playlist_id,
-    external_id: channel.external_id || '',
-    name: channel.name,
-    group: channel.group || '',
-    logo: channel.logo || '',
-    archive_supported: !!channel.archive_supported
+  await api('/api/favorites', {
+    method: 'POST',
+    body: JSON.stringify({
+      channel_id: channel.id
+    })
   })
-  saveFavorites()
+  await loadFavorites()
   void loadFavoriteNowPrograms()
 }
 
@@ -833,8 +915,15 @@ async function pickFavorite(channel) {
   const target = findChannelByFavorite(channel, channels.value)
   if (!target) {
     window.alert(t('channel_not_found'))
-    favorites.value = favorites.value.filter((item) => favoriteStorageKey(item) !== favoriteStorageKey(channel))
-    saveFavorites()
+    await api('/api/favorites', {
+      method: 'DELETE',
+      body: JSON.stringify({
+        playlist_id: channel.playlist_id,
+        channel_id: channel.id,
+        channel_external_id: channel.external_id || ''
+      })
+    })
+    await loadFavorites()
     return
   }
   await pickChannel(target.id)
@@ -852,6 +941,7 @@ function isGroupOpen(name) {
 
 function toggleGroup(name) {
   openGroups.value[name] = !isGroupOpen(name)
+  saveLastSelectedChannel()
   saveOpenGroupsForPlaylist()
 }
 
@@ -931,11 +1021,11 @@ async function fetchNowProgramForChannel(playlistID, channelID) {
 }
 
 function isArchivePlayingProgram(program) {
-  return archiveSupported.value && selectedProgramKey.value === programKey(program) && isPastProgram(program)
+  return archiveSupported.value && isArchivePlaybackActive() && selectedProgramKey.value === programKey(program) && isPastProgram(program)
 }
 
 function isTimeshiftPlayingProgram(program) {
-  if (!archiveSupported.value || selectedProgramKey.value !== programKey(program)) return false
+  if (!archiveSupported.value || !isArchivePlaybackActive() || selectedProgramKey.value !== programKey(program)) return false
   if (!isCurrentProgram(program)) return false
   const liveEdge = currentLiveEdgeOffset(program)
   return currentPlaybackOffsetSeconds() < liveEdge - 1
@@ -984,6 +1074,15 @@ function syncSelectedProgramWithBroadcastTime() {
     startPlaybackTracking(timeshiftOffsetSeconds.value)
     return
   }
+  const nowProgram = programs.value.find((program) => isProgramCurrent(program, nowTickMs.value))
+  if (!isArchivePlaybackActive() && nowProgram && programKey(nowProgram) !== selectedProgramKey.value) {
+    selectedProgramKey.value = programKey(nowProgram)
+    nowProgramByChannel.value[selectedChannel.value] = nowProgram
+    const liveOffset = currentLiveEdgeOffset(nowProgram)
+    timeshiftOffsetSeconds.value = liveOffset
+    startPlaybackTracking(liveOffset)
+    return
+  }
   if (!isPastProgram(selectedProgram.value, nowTickMs.value)) return
 
   const maxOffset = timeshiftMaxSeconds.value
@@ -991,7 +1090,6 @@ function syncSelectedProgramWithBroadcastTime() {
   const reachedProgramEnd = maxOffset <= 0 || timeshiftOffsetSeconds.value >= maxOffset - 1 || playbackOffset >= maxOffset - 1
   if (!reachedProgramEnd) return
 
-  const nowProgram = programs.value.find((program) => isProgramCurrent(program, nowTickMs.value))
   if (!nowProgram || programKey(nowProgram) === selectedProgramKey.value) return
 
   selectedProgramKey.value = programKey(nowProgram)
@@ -1088,14 +1186,14 @@ function applySelectedAudioTrackToPlayback() {
   }
 }
 
-function streamURLForProgram(channelID, program, offsetSeconds = 0) {
+function streamURLForProgram(channelID, program, offsetSeconds = 0, options = {}) {
   const base = `/api/channels/${channelID}/stream`
   if (!archiveSupported.value) {
     return withStreamOptions(base)
   }
   const offset = Math.max(0, Math.floor(offsetSeconds))
   const liveEdge = currentLiveEdgeOffset(program)
-  if (isCurrentProgram(program) && offset >= Math.max(0, liveEdge-1)) {
+  if (!options.forceArchive && isCurrentProgram(program) && offset >= Math.max(0, liveEdge-1)) {
     return withStreamOptions(base)
   }
   const startAt = new Date(program.start_at)
@@ -1115,6 +1213,36 @@ function streamURLForProgram(channelID, program, offsetSeconds = 0) {
 function isArchiveStreamURL(src) {
   if (!src) return false
   return src.includes('start=') || src.includes('end=')
+}
+
+function playbackOffsetFromArchiveURL(src) {
+  if (!src || !selectedProgram.value || !video.value) return -1
+  let url
+  try {
+    url = new URL(src, window.location.origin)
+  } catch {
+    return -1
+  }
+  const startRaw = url.searchParams.get('start')
+  if (!startRaw) return -1
+  const archiveStartMs = new Date(startRaw).getTime()
+  const programStartMs = new Date(selectedProgram.value.start_at).getTime()
+  if (!Number.isFinite(archiveStartMs) || !Number.isFinite(programStartMs)) return -1
+  const videoOffsetSeconds = Number(video.value.currentTime || 0)
+  if (!Number.isFinite(videoOffsetSeconds)) return -1
+  return Math.max(0, Math.floor(((archiveStartMs - programStartMs) / 1000) + videoOffsetSeconds))
+}
+
+function isArchivePlaybackActive() {
+  const src = currentVideoSrc.value || video.value?.currentSrc || ''
+  if (isArchiveStreamURL(src)) return true
+  return !!(
+    streamSuspendedForPause &&
+    pausedPlaybackResume &&
+    selectedProgram.value &&
+    pausedPlaybackResume.channelID === selectedChannel.value &&
+    pausedPlaybackResume.programKey === programKey(selectedProgram.value)
+  )
 }
 
 function shouldUseManagedHls(nextSrc) {
@@ -1386,8 +1514,36 @@ function applyStreamModeHeadResponse(res) {
   refreshStartupOverlayMode()
 }
 
+function markPlaybackPaused() {
+  pausePlaybackTracking()
+  isPlaying.value = false
+  controlsVisible.value = true
+  if (controlsHideTimer) {
+    clearTimeout(controlsHideTimer)
+    controlsHideTimer = null
+  }
+}
+
+function rememberPausedPlaybackResume() {
+  if (!archiveSupported.value || !selectedChannel.value || !selectedProgram.value) {
+    pausedPlaybackResume = null
+    return
+  }
+  const src = currentVideoSrc.value || video.value?.currentSrc || ''
+  const archiveOffset = playbackOffsetFromArchiveURL(src)
+  const offset = archiveOffset >= 0 ? archiveOffset : currentPlaybackOffsetSeconds()
+  pausedPlaybackResume = {
+    channelID: selectedChannel.value,
+    programKey: programKey(selectedProgram.value),
+    offsetSeconds: Math.min(offset, currentLiveEdgeOffset(selectedProgram.value))
+  }
+}
+
 function suspendStreamForPause() {
-  if (!video.value || !currentVideoSrc.value) return
+  if (!video.value) return
+  markPlaybackPaused()
+  rememberPausedPlaybackResume()
+  if (!currentVideoSrc.value) return
   streamSuspendedForPause = true
   clearStalledRecoveryTimer()
   clearStartupSlowTimer()
@@ -1403,7 +1559,20 @@ function suspendStreamForPause() {
 function resumeStreamAfterPause() {
   if (!video.value) return
   userPausedPlayback = false
-  const targetURL = currentTargetStreamURL() || currentVideoSrc.value
+  const resume = pausedPlaybackResume
+  pausedPlaybackResume = null
+  const targetURL = (
+    resume &&
+    resume.channelID === selectedChannel.value &&
+    selectedProgram.value &&
+    resume.programKey === programKey(selectedProgram.value)
+  )
+    ? streamURLForProgram(resume.channelID, selectedProgram.value, resume.offsetSeconds, { forceArchive: true })
+    : currentTargetStreamURL() || currentVideoSrc.value
+  if (resume && selectedProgram.value && resume.programKey === programKey(selectedProgram.value)) {
+    timeshiftOffsetSeconds.value = Math.min(resume.offsetSeconds, currentLiveEdgeOffset(selectedProgram.value))
+    pausePlaybackTracking()
+  }
   if (!targetURL) {
     void video.value.play().catch(() => {})
     return
@@ -1416,6 +1585,7 @@ function resumeStreamAfterPause() {
 function playVideoSource(nextSrc, options = {}) {
   if (!video.value || !nextSrc) return false
   const wasSuspended = streamSuspendedForPause
+  pausedPlaybackResume = null
   userPausedPlayback = false
   const reloaded = setVideoSourceIfChanged(nextSrc, {
     ...options,
@@ -1485,6 +1655,7 @@ function togglePlayPause() {
     resumeStreamAfterPause()
   } else {
     userPausedPlayback = true
+    markPlaybackPaused()
     video.value.pause()
     suspendStreamForPause()
   }
@@ -1530,13 +1701,8 @@ function onVideoPlay() {
 }
 
 function onVideoPause() {
-  pausePlaybackTracking()
-  isPlaying.value = false
-  controlsVisible.value = true
-  if (controlsHideTimer) {
-    clearTimeout(controlsHideTimer)
-    controlsHideTimer = null
-  }
+  markPlaybackPaused()
+  rememberPausedPlaybackResume()
 }
 
 function toggleMute() {
@@ -1830,6 +1996,7 @@ function findNextProgramIndex() {
 
 async function loadPlaylists() {
   playlists.value = asArray(await api('/api/playlists'))
+  handlePlaylistSyncChanges(playlists.value)
   const existing = new Set(playlists.value.map((p) => p.id))
   visibleCountByPlaylist.value = Object.fromEntries(
     Object.entries(visibleCountByPlaylist.value).filter(([id]) => existing.has(Number(id)))
@@ -1888,7 +2055,6 @@ async function removePlaylist(playlist) {
 
   await api(`/api/playlists/${playlist.id}`, { method: 'DELETE' })
   favorites.value = favorites.value.filter((item) => item.playlist_id !== playlist.id)
-  saveFavorites()
   favoriteNowProgramByKey.value = Object.fromEntries(
     Object.entries(favoriteNowProgramByKey.value).filter(([key]) => !key.startsWith(`${playlist.id}:`))
   )
@@ -1963,7 +2129,7 @@ async function loadChannels() {
   updateVisibleCountForSelectedPlaylist()
   const groupsState = {}
   for (const channel of channels.value) {
-    const groupName = channel.group || 'Без группы'
+    const groupName = groupNameForChannel(channel)
     if (groupsState[groupName] === undefined) {
       groupsState[groupName] = false
     }
@@ -1972,6 +2138,8 @@ async function loadChannels() {
   const savedSettingsOpenGroups = getGroupStateForPlaylist(SETTINGS_OPEN_GROUPS_STORAGE_KEY, selectedPlaylist.value)
   openGroups.value = mergeGroupState(groupsState, savedOpenGroups, false)
   settingsOpenGroups.value = mergeGroupState(groupsState, savedSettingsOpenGroups, true)
+  ensureGroupStateForChannels(channels.value)
+  openSelectedChannelGroup()
   saveOpenGroupsForPlaylist()
   saveSettingsOpenGroupsForPlaylist()
 
@@ -1989,7 +2157,11 @@ async function loadRemainingChannelsInBackground(playlistID, offset, pageSize, t
       if (token !== nowProgramsRequestToken) return
       if (!Array.isArray(page) || page.length === 0) return
       channels.value = channels.value.concat(page)
+      ensureGroupStateForChannels(page, { persist: true })
       updateVisibleCountForSelectedPlaylist()
+      if (selectedChannel.value && page.some((c) => c.id === selectedChannel.value)) {
+        openSelectedChannelGroup({ persist: true })
+      }
       if (page.length < pageSize) return
       nextOffset += pageSize
     }
@@ -2046,9 +2218,9 @@ async function pickChannel(channelID) {
   selectedChannel.value = channelID
   setAudioTracks([])
   selectedAudioTrack.value = preferredAudioTrackForChannel(channelID)
-  localStorage.setItem('webtv_last_channel', channelID)
   const selected = channels.value.find((c) => c.id === channelID)
-  localStorage.setItem('webtv_last_channel_external_id', selected?.external_id || '')
+  saveLastSelectedChannel(selected)
+  openGroupForChannel(selected, { persist: true })
   applyChannelVideoFit()
   await selectChannel()
 }
@@ -2202,6 +2374,38 @@ function seekBySeconds(delta) {
   applyTimeshift()
 }
 
+function continueCurrentProgramAfterArchiveEnd(liveURL) {
+  if (!selectedProgram.value) return
+  const liveEdge = currentLiveEdgeOffset(selectedProgram.value)
+  const playbackOffset = Math.min(currentPlaybackOffsetSeconds(), liveEdge)
+  const liveGap = liveEdge - playbackOffset
+  if (liveGap > liveEdgeSwitchToleranceSeconds) {
+    timeshiftOffsetSeconds.value = playbackOffset
+    startPlaybackTracking(playbackOffset)
+    const archiveURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, playbackOffset)
+    const reloaded = setVideoSourceIfChanged(archiveURL, { force: true, skipCooldown: true })
+    if (reloaded) {
+      void video.value.play().catch(() => {})
+      return
+    }
+    if (video.value && !userPausedPlayback) {
+      void video.value.play().catch(() => {})
+    }
+    return
+  }
+
+  timeshiftOffsetSeconds.value = liveEdge
+  startPlaybackTracking(liveEdge)
+  const reloaded = setVideoSourceIfChanged(liveURL, { force: true, skipCooldown: true })
+  if (reloaded) {
+    void video.value.play().catch(() => {})
+    return
+  }
+  if (video.value && !userPausedPlayback) {
+    void video.value.play().catch(() => {})
+  }
+}
+
 function onVideoEnded() {
   if (!selectedChannel.value || !video.value) return
 
@@ -2236,13 +2440,7 @@ function onVideoEnded() {
     return
   }
 
-  const liveEdge = currentLiveEdgeOffset(selectedProgram.value)
-  if (timeshiftOffsetSeconds.value < liveEdge-2) return
-  const reloaded = setVideoSourceIfChanged(liveURL, { force: true })
-  if (reloaded) {
-    startPlaybackTracking(liveEdge)
-    void video.value.play().catch(() => {})
-  }
+  continueCurrentProgramAfterArchiveEnd(liveURL)
 }
 
 watch(
@@ -2275,11 +2473,11 @@ onMounted(async () => {
     systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     systemThemeMediaQuery.addEventListener?.('change', onSystemThemeChange)
   }
-  loadFavorites()
   loadVideoFitPrefs()
   loadAudioTrackPrefs()
   loadDefaultAudioLanguage()
   await loadAppConfig()
+  await loadFavorites()
   await loadPlaylists()
 
   const lastPlaylistID = parseInt(localStorage.getItem('webtv_last_playlist') || '0', 10)

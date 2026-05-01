@@ -84,6 +84,12 @@ CREATE TABLE IF NOT EXISTS hidden_channels (
 	playlist_id INTEGER NOT NULL,
 	channel_external_id TEXT NOT NULL,
 	PRIMARY KEY(playlist_id, channel_external_id)
+);
+CREATE TABLE IF NOT EXISTS favorites (
+	playlist_id INTEGER NOT NULL,
+	channel_external_id TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY(playlist_id, channel_external_id)
 );`)
 	if err != nil {
 		return err
@@ -170,6 +176,7 @@ func (s *Store) DeletePlaylist(ctx context.Context, id int64) error {
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM programs WHERE playlist_id=?`, id)
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM hidden_groups WHERE playlist_id=?`, id)
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM hidden_channels WHERE playlist_id=?`, id)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM favorites WHERE playlist_id=?`, id)
 	_, err := s.db.ExecContext(ctx, `DELETE FROM playlists WHERE id=?`, id)
 	if err != nil {
 		return err
@@ -249,6 +256,12 @@ ON CONFLICT(playlist_id, external_id) DO UPDATE SET
 		}
 		q := fmt.Sprintf(`DELETE FROM channels WHERE playlist_id=? AND external_id NOT IN (%s)`, strings.Join(holders, ","))
 		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return err
+		}
+		favArgs := make([]any, 0, len(args))
+		favArgs = append(favArgs, args...)
+		favQ := fmt.Sprintf(`DELETE FROM favorites WHERE playlist_id=? AND channel_external_id NOT IN (%s)`, strings.Join(holders, ","))
+		if _, err := tx.ExecContext(ctx, favQ, favArgs...); err != nil {
 			return err
 		}
 	}
@@ -337,6 +350,64 @@ func (s *Store) GetChannel(ctx context.Context, id int64) (model.Channel, error)
 
 func (s *Store) SetChannelStreamModeCache(ctx context.Context, channelID int64, mode string, checkedAt time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE channels SET stream_mode_cache=?, stream_mode_checked_at=? WHERE id=?`, mode, checkedAt.UTC().Format(time.RFC3339), channelID)
+	return err
+}
+
+func (s *Store) ListFavorites(ctx context.Context) ([]model.Channel, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT c.id,c.playlist_id,c.external_id,c.name,c.group_name,c.sort_index,c.logo,c.stream_url,c.archive_supported,c.stream_mode_cache,c.stream_mode_checked_at
+FROM favorites f
+JOIN channels c ON c.playlist_id=f.playlist_id AND c.external_id=f.channel_external_id
+ORDER BY f.created_at, c.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]model.Channel, 0)
+	for rows.Next() {
+		var c model.Channel
+		var archived int
+		var mode sql.NullString
+		var modeAt sql.NullString
+		if err := rows.Scan(&c.ID, &c.PlaylistID, &c.ExternalID, &c.Name, &c.Group, &c.SortIndex, &c.Logo, &c.StreamURL, &archived, &mode, &modeAt); err != nil {
+			return nil, err
+		}
+		c.ArchiveSupported = archived == 1
+		c.StreamModeCache = mode.String
+		if modeAt.Valid {
+			t, _ := time.Parse(time.RFC3339, modeAt.String)
+			c.StreamModeAt = &t
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddFavorite(ctx context.Context, playlistID int64, channelExternalID string) error {
+	res, err := s.db.ExecContext(ctx, `
+INSERT OR IGNORE INTO favorites(playlist_id, channel_external_id, created_at)
+SELECT ?, ?, ?
+WHERE EXISTS (
+	SELECT 1 FROM channels WHERE playlist_id=? AND external_id=?
+)`, playlistID, channelExternalID, time.Now().UTC().Format(time.RFC3339), playlistID, channelExternalID)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err == nil && affected == 0 {
+		var exists int
+		if scanErr := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM favorites WHERE playlist_id=? AND channel_external_id=?`, playlistID, channelExternalID).Scan(&exists); scanErr != nil {
+			return scanErr
+		}
+		if exists == 0 {
+			return sql.ErrNoRows
+		}
+	}
+	return nil
+}
+
+func (s *Store) RemoveFavorite(ctx context.Context, playlistID int64, channelExternalID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM favorites WHERE playlist_id=? AND channel_external_id=?`, playlistID, channelExternalID)
 	return err
 }
 

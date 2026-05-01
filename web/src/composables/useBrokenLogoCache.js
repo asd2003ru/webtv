@@ -87,10 +87,36 @@ export function useBrokenLogoCache() {
     saveBrokenLogos()
   }
 
+  async function clearLogoCaches() {
+    if (brokenLogoSaveTimer) {
+      clearTimeout(brokenLogoSaveTimer)
+      brokenLogoSaveTimer = null
+    }
+    brokenLogos.value = {}
+    brokenLogoExpiresAt = {}
+    try {
+      localStorage.removeItem(BROKEN_LOGOS_STORAGE_KEY)
+    } catch {
+      // Cache is a performance hint; storage failures can be ignored.
+    }
+    if (!window.caches?.keys) return
+    try {
+      const keys = await window.caches.keys()
+      await Promise.all(
+        keys
+          .filter((key) => key.startsWith('webtv-logo-cache-'))
+          .map((key) => window.caches.delete(key))
+      )
+    } catch {
+      // Cache API may be unavailable in private mode or older browsers.
+    }
+  }
+
   return {
     showChannelLogo,
     markLogoError,
     loadBrokenLogos,
+    clearLogoCaches,
     flushBrokenLogos
   }
 }

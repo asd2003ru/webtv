@@ -33,7 +33,13 @@
       ></div>
       <div class="player-controls-overlay" :class="{ hidden: !controlsVisible }">
         <div class="player-controls-row">
-          <button type="button" class="btn subtle icon-btn" :aria-label="isPlaying ? 'Pause' : 'Play'" @click="onTogglePlayPause">
+          <button
+            type="button"
+            class="btn subtle icon-btn"
+            :aria-label="isPlaying ? t('player_pause') : t('player_play')"
+            :title="isPlaying ? t('player_pause') : t('player_play')"
+            @click="onTogglePlayPause"
+          >
             <svg v-if="!isPlaying" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M8 5v14l11-7z" />
             </svg>
@@ -41,7 +47,13 @@
               <path d="M7 5h4v14H7zm6 0h4v14h-4z" />
             </svg>
           </button>
-          <button type="button" class="btn subtle icon-btn" :aria-label="isMuted ? 'Unmute' : 'Mute'" @click="onToggleMute">
+          <button
+            type="button"
+            class="btn subtle icon-btn"
+            :aria-label="isMuted ? t('player_unmute') : t('player_mute')"
+            :title="isMuted ? t('player_unmute') : t('player_mute')"
+            @click="onToggleMute"
+          >
             <svg v-if="!isMuted" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M3 10v4h4l5 4V6L7 10H3zm13.5 2a3.5 3.5 0 0 0-1.5-2.87v5.74A3.5 3.5 0 0 0 16.5 12zm0-7a10 10 0 0 1 0 14l-1.41-1.41a8 8 0 0 0 0-11.18L16.5 5z" />
             </svg>
@@ -59,27 +71,61 @@
             aria-label="Volume"
             @input="onVolumeInput"
           />
-          <button type="button" class="btn subtle icon-btn" aria-label="Previous Program" :disabled="!canPrevProgram" @click="onSelectPrevProgram">
+          <button
+            type="button"
+            class="btn subtle icon-btn"
+            :aria-label="t('player_previous_program')"
+            :title="t('player_previous_program')"
+            :disabled="!canPrevProgram"
+            @click="onSelectPrevProgram"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M6 6h2v12H6zm3 6 9-6v12z" />
             </svg>
           </button>
-          <button type="button" class="btn subtle icon-btn" aria-label="Next Program" :disabled="!canNextProgram" @click="onSelectNextProgram">
+          <button
+            type="button"
+            class="btn subtle icon-btn"
+            :aria-label="t('player_next_program')"
+            :title="t('player_next_program')"
+            :disabled="!canNextProgram"
+            @click="onSelectNextProgram"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M16 6h2v12h-2zM7 18V6l9 6z" />
             </svg>
           </button>
-          <button type="button" class="btn subtle icon-btn" aria-label="Back 10 Seconds" :disabled="!canSeekArchive" @click="onSeekBySeconds(-10)">
+          <button
+            type="button"
+            class="btn subtle icon-btn"
+            :aria-label="t('player_back_10')"
+            :title="t('player_back_10')"
+            :disabled="!canSeekArchive"
+            @click="onSeekBySeconds(-10)"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 5a7 7 0 1 1-6.32 10H3l3.5-3.5L10 15H7.7A5 5 0 1 0 12 7v2l-3-3 3-3v2zm1 4h-2v3l2.5 1.5 1-1.73-1.5-.87z" />
             </svg>
           </button>
-          <button type="button" class="btn subtle icon-btn" aria-label="Forward 10 Seconds" :disabled="!canSeekArchive" @click="onSeekBySeconds(10)">
+          <button
+            type="button"
+            class="btn subtle icon-btn"
+            :aria-label="t('player_forward_10')"
+            :title="t('player_forward_10')"
+            :disabled="!canSeekArchive"
+            @click="onSeekBySeconds(10)"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 5V3l3 3-3 3V7a5 5 0 1 1-4.3 7H5.68A7 7 0 1 0 12 5zm-1 4h2v3l2.5 1.5-1 1.73L11 13z" />
             </svg>
           </button>
-          <button type="button" class="btn subtle icon-btn" aria-label="Fullscreen" @click="onToggleFullscreen">
+          <button
+            type="button"
+            class="btn subtle icon-btn"
+            :aria-label="t('player_fullscreen')"
+            :title="t('player_fullscreen')"
+            @click="onToggleFullscreen"
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M7 3H3v4h2V5h2V3zm14 0h-4v2h2v2h2V3zM5 17H3v4h4v-2H5v-2zm16 0h-2v2h-2v2h4v-4z" />
             </svg>
@@ -87,8 +133,8 @@
           <button
             type="button"
             class="btn subtle icon-btn"
-            :aria-label="`Video Fit: ${videoFitModeLabel}`"
-            :title="`Режим кадра: ${videoFitModeLabel}`"
+            :aria-label="t('player_video_fit').replace('{mode}', videoFitModeLabel)"
+            :title="t('player_video_fit').replace('{mode}', videoFitModeLabel)"
             :disabled="!selectedChannel"
             @click="onCycleVideoFitMode"
           >
@@ -105,8 +151,8 @@
           <button
             type="button"
             class="btn subtle icon-btn"
-            :aria-label="isInPictureInPicture ? 'Close Floating Player' : 'Open Floating Player'"
-            :title="isInPictureInPicture ? 'Закрыть плавающее окно' : 'Открыть плавающее окно'"
+            :aria-label="isInPictureInPicture ? t('player_pip_close') : t('player_pip_open')"
+            :title="isInPictureInPicture ? t('player_pip_close') : t('player_pip_open')"
             :disabled="!selectedChannel || !pictureInPictureSupported"
             @click="onDetachPlayer"
           >
@@ -178,6 +224,7 @@ defineProps({
   timeshiftMaxLabel: { type: String, required: true },
   showDebugOverlay: { type: Boolean, required: true },
   hlsDebug: { type: Object, required: true },
+  t: { type: Function, required: true },
   onVideoMetadata: { type: Function, required: true },
   onVideoEnded: { type: Function, required: true },
   onVideoPlay: { type: Function, required: true },
