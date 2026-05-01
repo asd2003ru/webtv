@@ -1102,7 +1102,7 @@ function shouldUseManagedHls(nextSrc) {
   if (!nextSrc || !video.value) return false
   if (!Hls.isSupported()) return false
   if (audioForceTranscode.value) return false
-  if (streamMode.value === 'transcode') return false
+  if (streamMode.value !== 'direct') return false
   return true
 }
 
@@ -1342,19 +1342,29 @@ function currentTargetStreamURL() {
 
 async function refreshStreamModeForCurrentChannel() {
   if (!selectedChannel.value) return
+  const headURL = currentTargetStreamURL() || withStreamOptions(`/api/channels/${selectedChannel.value}/stream`)
+  await prepareStreamModeForURL(headURL)
+}
+
+async function prepareStreamModeForURL(headURL) {
   try {
-    const headURL = currentTargetStreamURL() || withStreamOptions(`/api/channels/${selectedChannel.value}/stream`)
     const res = await fetch(headURL, { method: 'HEAD' })
-    const nextMode = res.headers.get('x-stream-mode') || ''
-    streamMode.value = nextMode
-    const videoPath = (res.headers.get('x-video-path') || '').trim()
-    const audioPath = (res.headers.get('x-audio-path') || '').trim()
-    if (videoPath !== '') hlsDebug.value.videoPath = videoPath
-    if (audioPath !== '') hlsDebug.value.audioPath = audioPath
-    refreshStartupOverlayMode()
+    applyStreamModeHeadResponse(res)
+    return true
   } catch {
     // Keep current mode on transient network errors.
+    return false
   }
+}
+
+function applyStreamModeHeadResponse(res) {
+  const nextMode = res.headers.get('x-stream-mode') || ''
+  streamMode.value = nextMode
+  const videoPath = (res.headers.get('x-video-path') || '').trim()
+  const audioPath = (res.headers.get('x-audio-path') || '').trim()
+  if (videoPath !== '') hlsDebug.value.videoPath = videoPath
+  if (audioPath !== '') hlsDebug.value.audioPath = audioPath
+  refreshStartupOverlayMode()
 }
 
 function suspendStreamForPause() {
@@ -2040,18 +2050,12 @@ async function selectChannel() {
 
   const c = channels.value.find((x) => x.id === selectedChannel.value)
   archiveSupported.value = !!c?.archive_supported
-  const liveURL = withStreamOptions(`/api/channels/${selectedChannel.value}/stream`)
+  let liveURL = withStreamOptions(`/api/channels/${selectedChannel.value}/stream`)
+  await prepareStreamModeForURL(liveURL)
+  if (token !== channelSelectRequestToken) return
+  liveURL = withStreamOptions(`/api/channels/${selectedChannel.value}/stream`)
   playVideoSource(liveURL)
   void loadAudioTracks()
-
-  const res = await fetch(liveURL, { method: 'HEAD' })
-  if (token !== channelSelectRequestToken) return
-  streamMode.value = res.headers.get('x-stream-mode') || ''
-  const videoPath = (res.headers.get('x-video-path') || '').trim()
-  const audioPath = (res.headers.get('x-audio-path') || '').trim()
-  if (videoPath !== '') hlsDebug.value.videoPath = videoPath
-  if (audioPath !== '') hlsDebug.value.audioPath = audioPath
-  refreshStartupOverlayMode()
 
   const now = new Date()
   const from = new Date(now.getTime() + (archiveSupported.value ? -24 : 0) * 60 * 60 * 1000)
@@ -2086,7 +2090,7 @@ async function selectChannel() {
   }
 }
 
-function selectProgram(program, options = {}) {
+async function selectProgram(program, options = {}) {
   if (isFutureProgram(program)) return
   selectedProgramKey.value = programKey(program)
   let initialOffset = 0
@@ -2098,7 +2102,9 @@ function selectProgram(program, options = {}) {
   timeshiftOffsetSeconds.value = initialOffset
   if (!video.value || !selectedChannel.value) return
 
-  const streamURL = streamURLForProgram(selectedChannel.value, program, timeshiftOffsetSeconds.value)
+  let streamURL = streamURLForProgram(selectedChannel.value, program, timeshiftOffsetSeconds.value)
+  await prepareStreamModeForURL(streamURL)
+  streamURL = streamURLForProgram(selectedChannel.value, program, timeshiftOffsetSeconds.value)
   playVideoSource(streamURL)
   startPlaybackTracking(initialOffset)
 }
@@ -2134,10 +2140,12 @@ function onTimeshiftInput(event) {
   timeshiftOffsetSeconds.value = Math.min(Math.max(0, Math.floor(offset)), cap)
 }
 
-function applyTimeshift() {
+async function applyTimeshift() {
   timeshiftDragging.value = false
   if (!selectedProgram.value || !video.value || !selectedChannel.value) return
-  const streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, timeshiftOffsetSeconds.value)
+  let streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, timeshiftOffsetSeconds.value)
+  await prepareStreamModeForURL(streamURL)
+  streamURL = streamURLForProgram(selectedChannel.value, selectedProgram.value, timeshiftOffsetSeconds.value)
   playVideoSource(streamURL)
   startPlaybackTracking(timeshiftOffsetSeconds.value)
 }

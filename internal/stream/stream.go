@@ -197,15 +197,20 @@ func (m *Manager) modeForURL(r *http.Request, streamURL string, allowProbe bool)
 	if !allowProbe {
 		return mode
 	}
-	if !strings.Contains(strings.ToLower(streamURL), ".m3u8") {
-		return mode
+	isHLSURL := strings.Contains(strings.ToLower(streamURL), ".m3u8")
+	hlsMode := ModeDirect
+	hlsOK := false
+	if isHLSURL {
+		hlsMode, hlsOK = m.probeHLSMode(r, streamURL)
+		if hlsOK && hlsMode == ModeTranscode {
+			return hlsMode
+		}
 	}
 	if probed, ok := m.probeCodecMode(streamURL); ok {
 		return probed
 	}
-	probed, ok := m.probeHLSMode(r, streamURL)
-	if ok {
-		return probed
+	if hlsOK {
+		return hlsMode
 	}
 	return mode
 }
@@ -367,24 +372,56 @@ func (m *Manager) ProbeAudioTracks(streamURL string) ([]AudioTrack, bool) {
 }
 
 func (m *Manager) probeHLSMode(r *http.Request, streamURL string) (Mode, bool) {
+	mode, ok := m.probeHLSModeDepth(r, streamURL, 0)
+	if ok {
+		return mode, true
+	}
+	return ModeDirect, false
+}
+
+func (m *Manager) probeHLSModeDepth(r *http.Request, streamURL string, depth int) (Mode, bool) {
+	body, ok := m.fetchHLSProbeBody(r, streamURL)
+	if !ok {
+		return ModeDirect, false
+	}
+	if hlsBodyNeedsTranscode(body) {
+		return ModeTranscode, true
+	}
+	if depth >= 1 {
+		return ModeDirect, true
+	}
+	for _, ref := range hlsManifestRefs(body, streamURL) {
+		mode, ok := m.probeHLSModeDepth(r, ref, depth+1)
+		if ok && mode == ModeTranscode {
+			return ModeTranscode, true
+		}
+	}
+	return ModeDirect, true
+}
+
+func (m *Manager) fetchHLSProbeBody(r *http.Request, streamURL string) (string, bool) {
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, streamURL, nil)
 	if err != nil {
-		return ModeDirect, false
+		return "", false
 	}
 	req.Header.Set("Range", "bytes=0-65535")
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return ModeDirect, false
+		return "", false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ModeDirect, false
+		return "", false
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
-		return ModeDirect, false
+		return "", false
 	}
-	body := strings.ToLower(string(data))
+	return string(data), true
+}
+
+func hlsBodyNeedsTranscode(body string) bool {
+	body = strings.ToLower(body)
 	// Typical browser-incompatible codecs in IPTV HLS manifests.
 	if strings.Contains(body, "ac-3") ||
 		strings.Contains(body, "a52") ||
@@ -393,9 +430,73 @@ func (m *Manager) probeHLSMode(r *http.Request, streamURL string) (Mode, bool) {
 		strings.Contains(body, "mpga") ||
 		strings.Contains(body, "hvc1") ||
 		strings.Contains(body, "hev1") {
-		return ModeTranscode, true
+		return true
 	}
-	return ModeDirect, true
+	return false
+}
+
+func hlsManifestRefs(body, baseURL string) []string {
+	lines := strings.Split(body, "\n")
+	refs := make([]string, 0, 4)
+	expectStreamURI := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		upper := strings.ToUpper(trimmed)
+		if strings.HasPrefix(upper, "#EXT-X-STREAM-INF") {
+			expectStreamURI = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") {
+			if strings.Contains(upper, "URI=") && strings.Contains(strings.ToLower(trimmed), ".m3u8") {
+				for _, uri := range hlsTagURIs(trimmed) {
+					refs = append(refs, resolveHLSRef(baseURL, uri))
+				}
+			}
+			continue
+		}
+		if expectStreamURI || strings.Contains(strings.ToLower(trimmed), ".m3u8") {
+			refs = append(refs, resolveHLSRef(baseURL, trimmed))
+		}
+		expectStreamURI = false
+	}
+	return refs
+}
+
+func hlsTagURIs(line string) []string {
+	uris := make([]string, 0, 1)
+	for {
+		idx := strings.Index(strings.ToUpper(line), `URI="`)
+		if idx == -1 {
+			return uris
+		}
+		start := idx + len(`URI="`)
+		endRel := strings.Index(line[start:], `"`)
+		if endRel == -1 {
+			return uris
+		}
+		end := start + endRel
+		uris = append(uris, line[start:end])
+		line = line[end+1:]
+	}
+}
+
+func resolveHLSRef(baseURL, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ref
+	}
+	u, err := url.Parse(ref)
+	if err != nil || u.IsAbs() {
+		return ref
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return ref
+	}
+	return base.ResolveReference(u).String()
 }
 
 func (m *Manager) proxy(w http.ResponseWriter, r *http.Request, streamURL string) {
@@ -870,6 +971,11 @@ func (m *Manager) transcode(w http.ResponseWriter, r *http.Request, streamURL st
 		"-c:a", audioCodecArg,
 		"-ac", "2",
 		"-ar", "48000",
+	)
+	if plan.audioCopy && strings.EqualFold(plan.audioCodec, "aac") {
+		args = append(args, "-bsf:a", "aac_adtstoasc")
+	}
+	args = append(args,
 		"-movflags", "+frag_keyframe+empty_moov+default_base_moof",
 		"-f", "mp4",
 		"pipe:1",

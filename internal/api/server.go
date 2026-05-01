@@ -439,7 +439,6 @@ func (s *Server) resolveChannelStreamMode(ctx context.Context, r *http.Request, 
 		if ch.StreamModeCache == string(stream.ModeTranscode) {
 			return stream.ModeTranscode
 		}
-		return stream.ModeDirect
 	}
 	mode := s.stream.DetectMode(r, streamURL)
 	if err := s.store.SetChannelStreamModeCache(ctx, ch.ID, string(mode), time.Now().UTC()); err != nil {
