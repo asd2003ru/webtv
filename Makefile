@@ -5,7 +5,7 @@ BIN := $(BIN_DIR)/$(APP_NAME)
 WEB_DIR := web
 WEB_DIST_DIR := internal/webui/dist
 
-.PHONY: all install deps web-install web-build build run test clean
+.PHONY: all install deps web-install web-build build run run-debug test clean
 
 all: build
 
@@ -26,6 +26,9 @@ build: web-build
 
 run: web-build
 	go run $(CMD_PATH)
+
+run-debug: web-build
+	WEBTV_LOG_LEVEL=debug go run $(CMD_PATH)
 
 test:
 	go test ./...
