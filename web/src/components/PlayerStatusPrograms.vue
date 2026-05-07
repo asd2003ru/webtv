@@ -49,7 +49,7 @@
   </div>
 
   <div v-if="selectedChannel" class="programs-under-player">
-    <h3>{{ t('channel_programs') }}</h3>
+    <h3>{{ t('channel_programs') }}<span v-if="selectedChannelName">: {{ selectedChannelName }}</span></h3>
 
     <div class="programs-custom-scroll">
       <div
@@ -122,6 +122,7 @@ const props = defineProps({
   selectedAudioTrack: { type: Number, required: true },
   deinterlaceEnabled: { type: Boolean, required: true },
   selectedChannel: { type: Number, required: true },
+  selectedChannelName: { type: String, required: true },
   programs: { type: Array, required: true },
   selectedProgramKey: { type: String, required: true },
   programKey: { type: Function, required: true },

@@ -145,6 +145,7 @@
             :selected-audio-track="selectedAudioTrack"
             :deinterlace-enabled="deinterlaceEnabled"
             :selected-channel="selectedChannel"
+            :selected-channel-name="selectedChannelName"
             :programs="programs"
             :selected-program-key="selectedProgramKey"
             :program-key="programKey"
@@ -395,6 +396,10 @@ const startupBadgeLabel = computed(() => {
 
 const form = ref(emptyForm())
 const timeshiftOffsetSeconds = ref(0)
+const selectedChannelName = computed(() => {
+  if (!selectedChannel.value) return ''
+  return channels.value.find((c) => c.id === selectedChannel.value)?.name || ''
+})
 const selectedProgram = computed(() => {
   if (!selectedProgramKey.value) return null
   return programs.value.find((p) => programKey(p) === selectedProgramKey.value) || null
