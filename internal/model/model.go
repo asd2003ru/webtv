@@ -29,6 +29,16 @@ type Channel struct {
 	StreamModeAt     *time.Time `json:"-"`
 }
 
+type LogoCacheEntry struct {
+	ID          int64
+	SourceURL   string
+	Status      string
+	ContentType string
+	Data        []byte
+	CheckedAt   *time.Time
+	LastError   string
+}
+
 type Program struct {
 	PlaylistID  int64     `json:"playlist_id"`
 	ChannelID   int64     `json:"channel_id"`

@@ -3,7 +3,9 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -19,6 +21,17 @@ type SyncService struct {
 	store  *storage.Store
 	client *http.Client
 }
+
+const (
+	logoCacheStatusOK      = "ok"
+	logoCacheStatusMissing = "missing"
+	logoCacheMaxBytes      = 1024 * 1024
+	logoCacheTTL           = 30 * 24 * time.Hour
+	logoFetchTimeout       = 8 * time.Second
+	logoSyncTimeout        = 15 * time.Minute
+	databaseVacuumInterval = 24 * time.Hour
+	databaseVacuumTimeout  = 30 * time.Minute
+)
 
 func NewSyncService(store *storage.Store) *SyncService {
 	return &SyncService{store: store, client: &http.Client{Timeout: 45 * time.Second}}
@@ -48,12 +61,108 @@ func (s *SyncService) SyncPlaylist(ctx context.Context, p model.Playlist) error 
 		logx.Errorf("playlist sync epg failed id=%d: %v", p.ID, err)
 		return err
 	}
+	logoChannels, err := s.store.ListChannelsByPlaylist(ctx, p.ID)
+	if err != nil {
+		_ = s.store.SetPlaylistSyncStatus(ctx, p.ID, err.Error())
+		logx.Errorf("playlist sync list logo channels failed id=%d: %v", p.ID, err)
+		return err
+	}
+	go func() {
+		logoCtx, cancel := context.WithTimeout(context.Background(), logoSyncTimeout)
+		defer cancel()
+		s.syncChannelLogos(logoCtx, logoChannels)
+	}()
 	if err := s.store.SetPlaylistSyncStatus(ctx, p.ID, ""); err != nil {
 		logx.Errorf("playlist sync set status failed id=%d: %v", p.ID, err)
 		return err
 	}
 	logx.Infof("playlist sync completed id=%d channels=%d", p.ID, len(storedChannels))
 	return nil
+}
+
+func (s *SyncService) syncChannelLogos(ctx context.Context, channels []model.Channel) {
+	seen := make(map[string]struct{}, len(channels))
+	var okCount, missingCount, skippedCount int
+	for _, ch := range channels {
+		sourceURL := strings.TrimSpace(ch.Logo)
+		if sourceURL == "" {
+			continue
+		}
+		if _, ok := seen[sourceURL]; ok {
+			continue
+		}
+		seen[sourceURL] = struct{}{}
+		if !isHTTPURL(sourceURL) {
+			missingCount++
+			if err := s.store.SaveLogoCache(ctx, sourceURL, logoCacheStatusMissing, "", nil, "unsupported logo URL"); err != nil {
+				logx.Errorf("save invalid logo cache url=%q: %v", sourceURL, err)
+			}
+			continue
+		}
+		entry, err := s.store.GetLogoCacheBySource(ctx, sourceURL)
+		if err == nil && entry.CheckedAt != nil && time.Since(*entry.CheckedAt) < logoCacheTTL {
+			skippedCount++
+			continue
+		}
+		status, contentType, data, lastErr := s.fetchLogo(ctx, sourceURL)
+		if status == logoCacheStatusOK {
+			okCount++
+		} else {
+			missingCount++
+		}
+		if err := s.store.SaveLogoCache(ctx, sourceURL, status, contentType, data, lastErr); err != nil {
+			logx.Errorf("save logo cache url=%q: %v", sourceURL, err)
+		}
+	}
+	if len(seen) > 0 {
+		logx.Infof("logo cache sync checked=%d ok=%d missing=%d skipped=%d", len(seen)-skippedCount, okCount, missingCount, skippedCount)
+	}
+}
+
+func (s *SyncService) fetchLogo(ctx context.Context, sourceURL string) (string, string, []byte, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return logoCacheStatusMissing, "", nil, err.Error()
+	}
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+	req.Header.Set("User-Agent", "WebTV logo cache")
+	client := &http.Client{Timeout: logoFetchTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return logoCacheStatusMissing, "", nil, err.Error()
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return logoCacheStatusMissing, "", nil, resp.Status
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, logoCacheMaxBytes+1))
+	if err != nil {
+		return logoCacheStatusMissing, "", nil, err.Error()
+	}
+	if len(data) == 0 {
+		return logoCacheStatusMissing, "", nil, "empty logo body"
+	}
+	if len(data) > logoCacheMaxBytes {
+		return logoCacheStatusMissing, "", nil, "logo is too large"
+	}
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	if !isImageContentType(contentType) {
+		return logoCacheStatusMissing, "", nil, "logo response is not an image"
+	}
+	return logoCacheStatusOK, contentType, data, ""
+}
+
+func isHTTPURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+func isImageContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	return strings.HasPrefix(contentType, "image/")
 }
 
 func (s *SyncService) fetchChannels(ctx context.Context, p model.Playlist) ([]model.Channel, error) {
@@ -505,10 +614,21 @@ func New(syncer *SyncService, store *storage.Store) *Scheduler {
 func (s *Scheduler) Start(ctx context.Context) {
 	t := time.NewTicker(1 * time.Minute)
 	defer t.Stop()
+	vacuumTicker := time.NewTicker(databaseVacuumInterval)
+	defer vacuumTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-vacuumTicker.C:
+			vacuumCtx, cancel := context.WithTimeout(ctx, databaseVacuumTimeout)
+			logx.Infof("database vacuum started")
+			if err := s.store.Vacuum(vacuumCtx); err != nil {
+				logx.Errorf("database vacuum failed: %v", err)
+			} else {
+				logx.Infof("database vacuum completed")
+			}
+			cancel()
 		case <-t.C:
 			pls, err := s.store.ListPlaylists(ctx)
 			if err != nil {

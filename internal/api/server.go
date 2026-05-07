@@ -76,6 +76,7 @@ func (s *Server) routes(staticFS http.Handler) {
 	s.mux.HandleFunc("/readyz", s.ready)
 	s.mux.HandleFunc("/api/config", s.uiConfig)
 	s.mux.HandleFunc("/api/logo", s.logoProxy)
+	s.mux.HandleFunc("/api/logos/", s.logoAsset)
 	s.mux.HandleFunc("/api/favorites", s.favorites)
 	s.mux.HandleFunc("/api/playlists", s.playlists)
 	s.mux.HandleFunc("/api/playlists/", s.playlistsSub)
@@ -150,11 +151,44 @@ func (s *Server) logoProxy(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
+func (s *Server) logoAsset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	rawID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/logos/"), "/")
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, errors.New("invalid logo id"), http.StatusBadRequest)
+		return
+	}
+	entry, err := s.store.GetLogoCacheByID(r.Context(), id)
+	if err != nil || entry.Status != "ok" || len(entry.Data) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	contentType := strings.TrimSpace(entry.ContentType)
+	if contentType == "" {
+		contentType = http.DetectContentType(entry.Data)
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=2592000, immutable")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(entry.Data)
+}
+
 func (s *Server) favorites(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		items, err := s.store.ListFavorites(r.Context())
 		if err != nil {
+			writeErr(w, err, 500)
+			return
+		}
+		if err := s.resolveChannelLogoURLs(r.Context(), items); err != nil {
 			writeErr(w, err, 500)
 			return
 		}
@@ -327,6 +361,10 @@ func (s *Server) playlistsSub(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err, 500)
 			return
 		}
+		if err := s.resolveChannelLogoURLs(r.Context(), chs); err != nil {
+			writeErr(w, err, 500)
+			return
+		}
 		writeJSON(w, 200, chs)
 	case "now-programs":
 		if r.Method != http.MethodGet {
@@ -480,6 +518,33 @@ func setStreamPathPlanHeaders(w http.ResponseWriter, plan stream.PathPlan) {
 	w.Header().Set("X-Audio-Path", plan.AudioPath)
 	w.Header().Set("X-Video-Codec", plan.VideoCodec)
 	w.Header().Set("X-Audio-Codec", plan.AudioCodec)
+}
+
+func (s *Server) resolveChannelLogoURLs(ctx context.Context, channels []model.Channel) error {
+	sourceURLs := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		sourceURL := strings.TrimSpace(ch.Logo)
+		if sourceURL != "" {
+			sourceURLs = append(sourceURLs, sourceURL)
+		}
+	}
+	entries, err := s.store.GetLogoCacheBySources(ctx, sourceURLs)
+	if err != nil {
+		return err
+	}
+	for i := range channels {
+		sourceURL := strings.TrimSpace(channels[i].Logo)
+		if sourceURL == "" {
+			continue
+		}
+		entry, ok := entries[sourceURL]
+		if !ok || entry.Status != "ok" || entry.ID <= 0 {
+			channels[i].Logo = ""
+			continue
+		}
+		channels[i].Logo = "/api/logos/" + strconv.FormatInt(entry.ID, 10)
+	}
+	return nil
 }
 
 func parseAudioTrackIndex(r *http.Request) int {

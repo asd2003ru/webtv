@@ -1,7 +1,10 @@
 <template>
   <main class="layout">
     <header class="topbar">
-      <h1>{{ appTitle }}</h1>
+      <div class="brand-mark">
+        <img class="brand-logo" src="/webtv-logo.svg" alt="" aria-hidden="true" />
+        <h1>{{ appTitle }}</h1>
+      </div>
     </header>
 
     <PlaylistsPanel
@@ -177,6 +180,7 @@
           :show-channel-logo="showChannelLogo"
           :channel-initial="channelInitial"
           :favorite-now-program-title="favoriteNowProgramTitle"
+          :favorite-now-program-for-channel="favoriteNowProgramForChannel"
           :is-favorite="isFavorite"
           :on-toggle-group="toggleGroup"
           :on-pick-channel="pickChannel"
@@ -297,6 +301,7 @@ let favoriteNowProgramsRequestToken = 0
 let channelSelectRequestToken = 0
 let playbackTicker = null
 let nowTicker = null
+let nowProgramsRefreshTimer = null
 let controlsHideTimer = null
 const currentVideoSrc = ref('')
 let hls = null
@@ -935,9 +940,13 @@ async function pickFavorite(channel) {
 }
 
 function favoriteNowProgramTitle(channel) {
+  return favoriteNowProgramForChannel(channel)?.title || t('no_current_program')
+}
+
+function favoriteNowProgramForChannel(channel) {
   const resolved = findChannelByFavorite(channel, channels.value) || channel
   const key = favoriteKey(resolved.playlist_id, resolved.id)
-  return favoriteNowProgramByKey.value[key]?.title || nowProgramByChannel.value[resolved.id]?.title || t('no_current_program')
+  return favoriteNowProgramByKey.value[key] || nowProgramByChannel.value[resolved.id] || null
 }
 
 function isGroupOpen(name) {
@@ -2113,6 +2122,7 @@ async function loadChannels() {
   const prevSelected = channels.value.find((c) => c.id === selectedChannel.value)
   const prevSelectedExternalID = prevSelected?.external_id || localStorage.getItem('webtv_last_channel_external_id') || ''
   nowProgramByChannel.value = {}
+  clearNowProgramsRefreshTimer()
 
   if (!selectedPlaylist.value) {
     channels.value = []
@@ -2154,6 +2164,82 @@ async function loadChannels() {
   }
 }
 
+function clearNowProgramsRefreshTimer() {
+  if (nowProgramsRefreshTimer) {
+    clearTimeout(nowProgramsRefreshTimer)
+    nowProgramsRefreshTimer = null
+  }
+}
+
+function scheduleNowProgramsRefresh(playlistID, token, items = []) {
+  clearNowProgramsRefreshTimer()
+  if (!playlistID || token !== nowProgramsRequestToken) return
+
+  const now = Date.now()
+  const nextEndMs = items.reduce((nearest, item) => {
+    const end = new Date(item?.end_at).getTime()
+    if (!Number.isFinite(end) || end <= now) return nearest
+    return Math.min(nearest, end)
+  }, Infinity)
+  const nextBoundaryDelay = Number.isFinite(nextEndMs) ? Math.max(5000, nextEndMs - now + 1000) : Infinity
+  const delay = Math.min(60000, nextBoundaryDelay)
+
+  nowProgramsRefreshTimer = window.setTimeout(() => {
+    void loadNowProgramsInBackground(playlistID, token)
+  }, delay)
+}
+
+function sameNowProgram(a, b) {
+  return Boolean(a && b) &&
+    a.channel_id === b.channel_id &&
+    a.title === b.title &&
+    a.start_at === b.start_at &&
+    a.end_at === b.end_at &&
+    (a.description || '') === (b.description || '')
+}
+
+function mergeNowProgramsForPlaylist(playlistID, items) {
+  const nextNowByChannel = {}
+  const nextFavoriteNowByKey = { ...favoriteNowProgramByKey.value }
+  const playlistFavoritePrefix = `${playlistID}:`
+  const currentFavoriteKeys = new Set()
+  for (const now of items) {
+    nextNowByChannel[now.channel_id] = now
+    const key = favoriteKey(playlistID, now.channel_id)
+    currentFavoriteKeys.add(key)
+    nextFavoriteNowByKey[key] = now
+  }
+  for (const key of Object.keys(nextFavoriteNowByKey)) {
+    if (key.startsWith(playlistFavoritePrefix) && !currentFavoriteKeys.has(key)) {
+      delete nextFavoriteNowByKey[key]
+    }
+  }
+
+  let nowChanged = Object.keys(nowProgramByChannel.value).length !== Object.keys(nextNowByChannel).length
+  if (!nowChanged) {
+    for (const [channelID, next] of Object.entries(nextNowByChannel)) {
+      if (!sameNowProgram(nowProgramByChannel.value[channelID], next)) {
+        nowChanged = true
+        break
+      }
+    }
+  }
+  if (nowChanged) {
+    nowProgramByChannel.value = nextNowByChannel
+  }
+
+  let favoriteChanged = Object.keys(favoriteNowProgramByKey.value).length !== Object.keys(nextFavoriteNowByKey).length
+  for (const [key, next] of Object.entries(nextFavoriteNowByKey)) {
+    if (!sameNowProgram(favoriteNowProgramByKey.value[key], next)) {
+      favoriteChanged = true
+      break
+    }
+  }
+  if (favoriteChanged) {
+    favoriteNowProgramByKey.value = nextFavoriteNowByKey
+  }
+}
+
 async function loadRemainingChannelsInBackground(playlistID, offset, pageSize, token) {
   let nextOffset = offset
   try {
@@ -2180,15 +2266,10 @@ async function loadNowProgramsInBackground(playlistID, token) {
   try {
     const items = asArray(await api(`/api/playlists/${playlistID}/now-programs`))
     if (token !== nowProgramsRequestToken) return
-    const nextNowByChannel = {}
-    const nextFavoriteNowByKey = { ...favoriteNowProgramByKey.value }
-    for (const now of items) {
-      nextNowByChannel[now.channel_id] = now
-      nextFavoriteNowByKey[favoriteKey(playlistID, now.channel_id)] = now
-    }
-    nowProgramByChannel.value = nextNowByChannel
-    favoriteNowProgramByKey.value = nextFavoriteNowByKey
+    mergeNowProgramsForPlaylist(playlistID, items)
+    scheduleNowProgramsRefresh(playlistID, token, items)
   } catch {
+    scheduleNowProgramsRefresh(playlistID, token)
     // Ignore list-view EPG errors to keep channel list usable.
   }
 }
@@ -2533,6 +2614,7 @@ onUnmounted(() => {
     clearInterval(nowTicker)
     nowTicker = null
   }
+  clearNowProgramsRefreshTimer()
   if (controlsHideTimer) {
     clearTimeout(controlsHideTimer)
     controlsHideTimer = null
@@ -2600,6 +2682,9 @@ html, body, #app { min-height: 100%; }
 body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--bg-page-from), var(--bg-page-to)); color: var(--text-main); }
 .layout { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.brand-mark { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-logo { width: 38px; height: 38px; object-fit: contain; flex: 0 0 auto; }
+.brand-mark h1 { margin: 0; }
 .app-footer {
   display: flex;
   align-items: center;
@@ -2952,7 +3037,7 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
   background: rgba(0, 0, 0, 0.35);
 }
 .player-controls-overlay .btn.subtle:hover { background: rgba(255, 255, 255, 0.2); }
-.channel-sidebar { border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px; background: var(--card-soft); max-height: 75vh; overflow: hidden; display: grid; gap: 10px; grid-template-rows: auto auto auto 1fr; margin-top: 0; }
+.channel-sidebar { border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px; background: var(--card-soft); max-height: 75vh; overflow: hidden; display: grid; gap: 10px; grid-template-rows: auto auto minmax(0, 1fr); margin-top: 0; }
 .sidebar-head { display: flex; justify-content: space-between; align-items: center; }
 .channel-search { position: relative; display: block; }
 .channel-search-input {
@@ -3000,13 +3085,42 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
 .group-toggle { width: 100%; display: flex; gap: 8px; align-items: center; border: none; background: transparent; padding: 0; text-align: left; cursor: pointer; }
 .group-toggle h4 { margin: 12px 0 8px; }
 .group-channels .hidden-setting-row { break-inside: avoid; page-break-inside: avoid; }
-.channel-row { width: 100%; border: 1px solid var(--border-soft); background: var(--card-strong); color: var(--text-on-card); border-radius: 8px; padding: 6px; display: grid; grid-template-columns: 44px 1fr auto; gap: 8px; align-items: center; text-align: left; margin-bottom: 6px; }
+.channel-row { width: 100%; border: 1px solid var(--border-soft); background: var(--card-strong); color: var(--text-on-card); border-radius: 8px; padding: 6px; display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; margin-bottom: 6px; }
 .channel-row { content-visibility: auto; contain-intrinsic-size: 58px; }
 .channel-row.selected { border-color: #4d84c4; background: #f1f7ff; }
 .channel-logo { width: 44px; height: 44px; object-fit: contain; border-radius: 6px; background: #fff; }
 .channel-logo-fallback { display: flex; align-items: center; justify-content: center; color: #3f4a56; font-size: 16px; font-weight: 700; border: 1px dashed #c7d2de; text-transform: uppercase; }
+.channel-meta { min-width: 0; }
 .channel-meta strong { display: block; font-size: 14px; }
 .channel-meta span { display: block; color: var(--text-subtle-on-card); font-size: 12px; }
+.channel-meta strong,
+.channel-program-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channel-program-progress {
+  height: 3px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-subtle-on-card) 18%, transparent);
+}
+.channel-program-progress-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: #4d84c4;
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: channel-program-progress var(--channel-program-duration, 1s) linear forwards;
+  animation-delay: var(--channel-program-delay, 0ms);
+}
+@keyframes channel-program-progress {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
 .channel-actions {
   justify-self: end;
   display: inline-flex;

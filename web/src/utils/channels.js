@@ -5,9 +5,10 @@ export function channelInitial(name) {
 
 export function normalizeLogoUrl(url) {
   const value = String(url || '').trim()
-  if (typeof window === 'undefined' || window.location.protocol !== 'https:') return value
-  if (!value.toLowerCase().startsWith('http://')) return value
-  return `/api/logo?src=${encodeURIComponent(value)}`
+  if (!value) return ''
+  if (value.startsWith('/api/logos/')) return value
+  if (value.startsWith('data:image/') || value.startsWith('blob:')) return value
+  return ''
 }
 
 export function fuzzyScore(text, query) {

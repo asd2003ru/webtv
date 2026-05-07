@@ -26,43 +26,61 @@
       </button>
     </label>
 
-    <section v-if="favoriteChannels.length > 0" class="favorites-block">
-      <h4>{{ t('favorites') }}</h4>
-      <button
-        v-for="c in favoriteChannels"
-        :key="`fav-${c.playlist_id}-${c.id}`"
-        type="button"
-        class="channel-row"
-        :class="{ selected: selectedChannel === c.id && selectedPlaylist === c.playlist_id }"
-        @click="onPickFavorite(c)"
-      >
-        <img
-          v-if="showChannelLogo(c)"
-          :src="normalizeLogoUrl(c.logo)"
-          :alt="c.name"
-          class="channel-logo"
-          width="44"
-          height="44"
-          loading="lazy"
-          decoding="async"
-          fetchpriority="low"
-          @error="onMarkFavoriteLogoError(c)"
-        />
-        <div v-else class="channel-logo channel-logo-fallback">{{ channelInitial(c.name) }}</div>
-        <div class="channel-meta">
-          <strong>{{ c.name }}</strong>
-          <span>{{ (playlistNameById[c.playlist_id] || `Playlist #${c.playlist_id}`) }} · {{ favoriteNowProgramTitle(c) }}</span>
-        </div>
-        <div class="channel-actions">
-          <span v-if="c.archive_supported" class="archive-indicator" :title="t('has_archive')">⏱</span>
-          <span class="favorite-toggle active" :title="t('remove_favorite')" @click.stop="onToggleFavorite(c)">
-            ★
-          </span>
-        </div>
-      </button>
-    </section>
-
     <div class="channel-groups">
+      <section v-if="favoriteChannels.length > 0" class="group-block favorites-block">
+        <div class="group-head">
+          <button type="button" class="group-toggle" @click="onToggleGroup(FAVORITES_GROUP)">
+            <span>{{ isGroupOpen(FAVORITES_GROUP) ? '▾' : '▸' }}</span>
+            <h4>{{ t('favorites') }}</h4>
+          </button>
+        </div>
+        <div v-if="isGroupOpen(FAVORITES_GROUP)">
+          <button
+            v-for="c in favoriteChannels"
+            :key="`fav-${c.playlist_id}-${c.id}`"
+            type="button"
+            class="channel-row"
+            :class="{ selected: selectedChannel === c.id && selectedPlaylist === c.playlist_id }"
+            v-memo="[selectedChannel === c.id && selectedPlaylist === c.playlist_id, favoriteNowProgramForChannel(c)?.title || '', favoriteNowProgramForChannel(c)?.start_at || '', favoriteNowProgramForChannel(c)?.end_at || '']"
+            @click="onPickFavorite(c)"
+          >
+            <img
+              v-if="showChannelLogo(c)"
+              :src="normalizeLogoUrl(c.logo)"
+              :alt="c.name"
+              class="channel-logo"
+              width="44"
+              height="44"
+              loading="lazy"
+              decoding="async"
+              fetchpriority="low"
+              @error="onMarkFavoriteLogoError(c)"
+            />
+            <div v-else class="channel-logo channel-logo-fallback">{{ channelInitial(c.name) }}</div>
+            <div class="channel-meta">
+              <strong>{{ c.name }}</strong>
+              <span class="channel-program-title">{{ (playlistNameById[c.playlist_id] || `Playlist #${c.playlist_id}`) }} · {{ favoriteNowProgramTitle(c) }}</span>
+              <span
+                v-if="hasTimedProgram(favoriteNowProgramForChannel(c))"
+                class="channel-program-progress"
+                aria-hidden="true"
+              >
+                <span
+                  class="channel-program-progress-fill"
+                  :style="programProgressAnimationStyle(favoriteNowProgramForChannel(c))"
+                ></span>
+              </span>
+            </div>
+            <div class="channel-actions">
+              <span v-if="c.archive_supported" class="archive-indicator" :title="t('has_archive')">⏱</span>
+              <span class="favorite-toggle active" :title="t('remove_favorite')" @click.stop="onToggleFavorite(c)">
+                ★
+              </span>
+            </div>
+          </button>
+        </div>
+      </section>
+
       <section v-for="group in visibleGroupedChannels" :key="group.name" class="group-block">
         <div class="group-head">
           <button type="button" class="group-toggle" @click="onToggleGroup(group.name)">
@@ -70,14 +88,14 @@
             <h4>{{ group.name || t('no_group') }}</h4>
           </button>
         </div>
-        <div v-show="isGroupOpen(group.name)">
+        <div v-if="isGroupOpen(group.name)">
           <button
             v-for="c in group.channels"
             :key="c.id"
             type="button"
             class="channel-row"
             :class="{ selected: selectedChannel === c.id }"
-            v-memo="[selectedChannel === c.id, nowProgramByChannel[c.id]?.title || '', isFavorite(c.playlist_id, c.id)]"
+            v-memo="[selectedChannel === c.id, nowProgramByChannel[c.id]?.title || '', nowProgramByChannel[c.id]?.start_at || '', nowProgramByChannel[c.id]?.end_at || '', isFavorite(c.playlist_id, c.id)]"
             @click="onPickChannel(c.id)"
           >
             <img
@@ -95,7 +113,17 @@
             <div v-else class="channel-logo channel-logo-fallback">{{ channelInitial(c.name) }}</div>
             <div class="channel-meta">
               <strong>{{ c.name }}</strong>
-              <span>{{ nowProgramByChannel[c.id]?.title || t('no_current_program') }}</span>
+              <span class="channel-program-title">{{ nowProgramByChannel[c.id]?.title || t('no_current_program') }}</span>
+              <span
+                v-if="hasTimedProgram(nowProgramByChannel[c.id])"
+                class="channel-program-progress"
+                aria-hidden="true"
+              >
+                <span
+                  class="channel-program-progress-fill"
+                  :style="programProgressAnimationStyle(nowProgramByChannel[c.id])"
+                ></span>
+              </span>
             </div>
             <div class="channel-actions">
               <span v-if="c.archive_supported" class="archive-indicator" :title="t('has_archive')">⏱</span>
@@ -133,6 +161,7 @@ const props = defineProps({
   showChannelLogo: { type: Function, required: true },
   channelInitial: { type: Function, required: true },
   favoriteNowProgramTitle: { type: Function, required: true },
+  favoriteNowProgramForChannel: { type: Function, required: true },
   isFavorite: { type: Function, required: true },
   onToggleGroup: { type: Function, required: true },
   onPickChannel: { type: Function, required: true },
@@ -145,8 +174,31 @@ const props = defineProps({
 
 const GROUP_INITIAL_RENDER = 120
 const GROUP_RENDER_STEP = 120
+const FAVORITES_GROUP = '__favorites__'
 const groupLimits = ref({})
 let progressiveRenderTimer = null
+
+function timedProgramBounds(program) {
+  const start = new Date(program?.start_at).getTime()
+  const end = new Date(program?.end_at).getTime()
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+  return { start, end }
+}
+
+function hasTimedProgram(program) {
+  return Boolean(timedProgramBounds(program))
+}
+
+function programProgressAnimationStyle(program) {
+  const bounds = timedProgramBounds(program)
+  if (!bounds) return {}
+  const duration = bounds.end - bounds.start
+  const elapsed = Math.max(0, Math.min(Date.now() - bounds.start, duration))
+  return {
+    '--channel-program-duration': `${duration}ms`,
+    '--channel-program-delay': `${-elapsed}ms`
+  }
+}
 
 watch(
   () => props.groupedChannels,

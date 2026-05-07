@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="web/public/webtv-logo.svg" alt="WebTV logo" width="120" height="120">
+</p>
+
 # WebTV
 
 WebTV is a small self-hosted IPTV player that runs in the browser. Add one or more M3U playlists, open the web UI from any computer on your network, and watch TV without installing a separate player on every machine.

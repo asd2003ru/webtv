@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="WebTV">
+  <defs>
+    <linearGradient id="webtv-frame" x1="76" y1="250" x2="436" y2="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#18c9d2"/>
+      <stop offset="0.52" stop-color="#18c9d2"/>
+      <stop offset="0.53" stop-color="#ffb21f"/>
+      <stop offset="1" stop-color="#ffb21f"/>
+    </linearGradient>
+    <linearGradient id="webtv-screen" x1="134" y1="154" x2="382" y2="390" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#26323c"/>
+      <stop offset="1" stop-color="#111820"/>
+    </linearGradient>
+    <linearGradient id="webtv-play" x1="218" y1="200" x2="330" y2="312" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8fff9"/>
+      <stop offset="1" stop-color="#fff6df"/>
+    </linearGradient>
+    <style>
+      .outer-ring { stroke: #f6fbff; }
+      .antenna-ring { stroke: #f6fbff; }
+      .screen-edge { stroke: #080d12; }
+      @media (prefers-color-scheme: light) {
+        .outer-ring { stroke: #0e1821; }
+        .antenna-ring { stroke: #0e1821; }
+        .screen-edge { stroke: #f7fbff; }
+      }
+    </style>
+  </defs>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path class="antenna-ring" d="M213 142 157 86" stroke-width="34"/>
+    <path class="antenna-ring" d="M299 142 355 86" stroke-width="34"/>
+    <path d="M213 142 157 86" stroke="#18222c" stroke-width="20"/>
+    <path d="M299 142 355 86" stroke="#18222c" stroke-width="20"/>
+  </g>
+  <rect x="68" y="130" width="376" height="292" rx="92" fill="url(#webtv-frame)" class="outer-ring" stroke-width="22"/>
+  <rect x="104" y="166" width="304" height="220" rx="64" fill="url(#webtv-screen)" class="screen-edge" stroke-width="12"/>
+  <rect x="146" y="206" width="24" height="24" rx="3" fill="#18c9d2"/>
+  <rect x="184" y="202" width="18" height="18" rx="3" fill="#18c9d2"/>
+  <rect x="218" y="206" width="13" height="13" rx="2" fill="#ffb21f"/>
+  <rect x="170" y="250" width="32" height="32" rx="4" fill="#18c9d2"/>
+  <rect x="146" y="286" width="16" height="16" rx="3" fill="#ffb21f"/>
+  <rect x="204" y="286" width="18" height="18" rx="3" fill="#18c9d2"/>
+  <rect x="170" y="322" width="18" height="18" rx="3" fill="#ffb21f"/>
+  <path d="M224 206 224 322 330 264Z" fill="#f8fff4" stroke="#16bfc8" stroke-width="18" stroke-linejoin="round"/>
+</svg>

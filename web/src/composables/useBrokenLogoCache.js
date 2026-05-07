@@ -15,7 +15,8 @@ export function useBrokenLogoCache() {
 
   function showChannelLogo(channel) {
     const url = (channel.logo || '').trim()
-    return !!url && !brokenLogos.value[logoKey(url)]
+    const isRenderableLogo = url.startsWith('/api/logos/') || url.startsWith('data:image/') || url.startsWith('blob:')
+    return isRenderableLogo && !brokenLogos.value[logoKey(url)]
   }
 
   function markLogoError(channel) {

@@ -40,6 +40,11 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
+func (s *Store) Vacuum(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `VACUUM`)
+	return err
+}
+
 func (s *Store) migrate() error {
 	_, err := s.db.Exec(`
 CREATE TABLE IF NOT EXISTS playlists (
@@ -90,6 +95,15 @@ CREATE TABLE IF NOT EXISTS favorites (
 	channel_external_id TEXT NOT NULL,
 	created_at TEXT NOT NULL,
 	PRIMARY KEY(playlist_id, channel_external_id)
+);
+CREATE TABLE IF NOT EXISTS logo_cache (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	source_url TEXT NOT NULL UNIQUE,
+	status TEXT NOT NULL,
+	content_type TEXT,
+	data BLOB,
+	checked_at TEXT NOT NULL,
+	last_error TEXT
 );`)
 	if err != nil {
 		return err
@@ -570,6 +584,107 @@ ORDER BY p.channel_id
 func (s *Store) SetPlaylistSyncStatus(ctx context.Context, playlistID int64, lastErr string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `UPDATE playlists SET last_sync_at=?, last_error=? WHERE id=?`, now, lastErr, playlistID)
+	return err
+}
+
+func (s *Store) GetLogoCacheBySource(ctx context.Context, sourceURL string) (model.LogoCacheEntry, error) {
+	var entry model.LogoCacheEntry
+	var checkedAt, contentType, lastErr sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, source_url, status, content_type, data, checked_at, last_error
+FROM logo_cache
+WHERE source_url = ?`, sourceURL).Scan(&entry.ID, &entry.SourceURL, &entry.Status, &contentType, &entry.Data, &checkedAt, &lastErr)
+	if err != nil {
+		return model.LogoCacheEntry{}, err
+	}
+	entry.ContentType = contentType.String
+	entry.LastError = lastErr.String
+	if checkedAt.Valid {
+		t, _ := time.Parse(time.RFC3339, checkedAt.String)
+		entry.CheckedAt = &t
+	}
+	return entry, nil
+}
+
+func (s *Store) GetLogoCacheBySources(ctx context.Context, sourceURLs []string) (map[string]model.LogoCacheEntry, error) {
+	out := make(map[string]model.LogoCacheEntry, len(sourceURLs))
+	seen := make(map[string]struct{}, len(sourceURLs))
+	unique := make([]string, 0, len(sourceURLs))
+	for _, sourceURL := range sourceURLs {
+		sourceURL = strings.TrimSpace(sourceURL)
+		if sourceURL == "" {
+			continue
+		}
+		if _, ok := seen[sourceURL]; ok {
+			continue
+		}
+		seen[sourceURL] = struct{}{}
+		unique = append(unique, sourceURL)
+	}
+	if len(unique) == 0 {
+		return out, nil
+	}
+	holders := make([]string, len(unique))
+	args := make([]any, len(unique))
+	for i, sourceURL := range unique {
+		holders[i] = "?"
+		args[i] = sourceURL
+	}
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+SELECT id, source_url, status, content_type, data, checked_at, last_error
+FROM logo_cache
+WHERE source_url IN (%s)`, strings.Join(holders, ",")), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var entry model.LogoCacheEntry
+		var checkedAt, contentType, lastErr sql.NullString
+		if err := rows.Scan(&entry.ID, &entry.SourceURL, &entry.Status, &contentType, &entry.Data, &checkedAt, &lastErr); err != nil {
+			return nil, err
+		}
+		entry.ContentType = contentType.String
+		entry.LastError = lastErr.String
+		if checkedAt.Valid {
+			t, _ := time.Parse(time.RFC3339, checkedAt.String)
+			entry.CheckedAt = &t
+		}
+		out[entry.SourceURL] = entry
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetLogoCacheByID(ctx context.Context, id int64) (model.LogoCacheEntry, error) {
+	var entry model.LogoCacheEntry
+	var checkedAt, contentType, lastErr sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, source_url, status, content_type, data, checked_at, last_error
+FROM logo_cache
+WHERE id = ?`, id).Scan(&entry.ID, &entry.SourceURL, &entry.Status, &contentType, &entry.Data, &checkedAt, &lastErr)
+	if err != nil {
+		return model.LogoCacheEntry{}, err
+	}
+	entry.ContentType = contentType.String
+	entry.LastError = lastErr.String
+	if checkedAt.Valid {
+		t, _ := time.Parse(time.RFC3339, checkedAt.String)
+		entry.CheckedAt = &t
+	}
+	return entry, nil
+}
+
+func (s *Store) SaveLogoCache(ctx context.Context, sourceURL, status, contentType string, data []byte, lastErr string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO logo_cache(source_url, status, content_type, data, checked_at, last_error)
+VALUES(?, ?, ?, ?, ?, ?)
+ON CONFLICT(source_url) DO UPDATE SET
+	status=excluded.status,
+	content_type=excluded.content_type,
+	data=excluded.data,
+	checked_at=excluded.checked_at,
+	last_error=excluded.last_error`, sourceURL, status, contentType, data, now, lastErr)
 	return err
 }
 
