@@ -2,6 +2,19 @@
   <aside v-show="sidebarOpen" class="channel-sidebar">
     <div class="sidebar-head">
       <h3>{{ t('channels') }}</h3>
+      <button
+        type="button"
+        class="channel-list-refresh"
+        :class="{ refreshing: channelsRefreshing }"
+        :disabled="channelsRefreshing || !selectedPlaylist"
+        :title="t('refresh_channels_from_service')"
+        :aria-label="t('refresh_channels_from_service')"
+        @click="onRefreshChannels"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.1A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h8V3z" />
+        </svg>
+      </button>
     </div>
     <label class="channel-search">
       <input
@@ -41,7 +54,7 @@
             type="button"
             class="channel-row"
             :class="{ selected: selectedChannel === c.id && selectedPlaylist === c.playlist_id }"
-            v-memo="[selectedChannel === c.id && selectedPlaylist === c.playlist_id, favoriteNowProgramForChannel(c)?.title || '', favoriteNowProgramForChannel(c)?.start_at || '', favoriteNowProgramForChannel(c)?.end_at || '']"
+            v-memo="[selectedChannel === c.id && selectedPlaylist === c.playlist_id, favoriteNowProgramForChannel(c)?.title || '', favoriteNowProgramForChannel(c)?.start_at || '', favoriteNowProgramForChannel(c)?.end_at || '', nowTickMs]"
             @click="onPickFavorite(c)"
           >
             <img
@@ -67,7 +80,7 @@
               >
                 <span
                   class="channel-program-progress-fill"
-                  :style="programProgressAnimationStyle(favoriteNowProgramForChannel(c))"
+                  :style="programProgressStyle(favoriteNowProgramForChannel(c))"
                 ></span>
               </span>
             </div>
@@ -95,7 +108,7 @@
             type="button"
             class="channel-row"
             :class="{ selected: selectedChannel === c.id }"
-            v-memo="[selectedChannel === c.id, nowProgramByChannel[c.id]?.title || '', nowProgramByChannel[c.id]?.start_at || '', nowProgramByChannel[c.id]?.end_at || '', isFavorite(c.playlist_id, c.id)]"
+            v-memo="[selectedChannel === c.id, nowProgramByChannel[c.id]?.title || '', nowProgramByChannel[c.id]?.start_at || '', nowProgramByChannel[c.id]?.end_at || '', isFavorite(c.playlist_id, c.id), nowTickMs]"
             @click="onPickChannel(c.id)"
           >
             <img
@@ -121,7 +134,7 @@
               >
                 <span
                   class="channel-program-progress-fill"
-                  :style="programProgressAnimationStyle(nowProgramByChannel[c.id])"
+                  :style="programProgressStyle(nowProgramByChannel[c.id])"
                 ></span>
               </span>
             </div>
@@ -150,6 +163,7 @@ import { normalizeLogoUrl } from '../utils/channels'
 const props = defineProps({
   sidebarOpen: { type: Boolean, required: true },
   t: { type: Function, required: true },
+  nowTickMs: { type: Number, required: true },
   channelSearchQuery: { type: String, required: true },
   favoriteChannels: { type: Array, required: true },
   selectedChannel: { type: Number, required: true },
@@ -157,6 +171,7 @@ const props = defineProps({
   playlistNameById: { type: Object, required: true },
   groupedChannels: { type: Array, required: true },
   nowProgramByChannel: { type: Object, required: true },
+  channelsRefreshing: { type: Boolean, required: true },
   isGroupOpen: { type: Function, required: true },
   showChannelLogo: { type: Function, required: true },
   channelInitial: { type: Function, required: true },
@@ -169,7 +184,8 @@ const props = defineProps({
   onToggleFavorite: { type: Function, required: true },
   onMarkLogoError: { type: Function, required: true },
   onMarkFavoriteLogoError: { type: Function, required: true },
-  onSetChannelSearchQuery: { type: Function, required: true }
+  onSetChannelSearchQuery: { type: Function, required: true },
+  onRefreshChannels: { type: Function, required: true }
 })
 
 const GROUP_INITIAL_RENDER = 120
@@ -189,14 +205,14 @@ function hasTimedProgram(program) {
   return Boolean(timedProgramBounds(program))
 }
 
-function programProgressAnimationStyle(program) {
+function programProgressStyle(program) {
   const bounds = timedProgramBounds(program)
   if (!bounds) return {}
   const duration = bounds.end - bounds.start
-  const elapsed = Math.max(0, Math.min(Date.now() - bounds.start, duration))
+  const elapsed = Math.max(0, Math.min(props.nowTickMs - bounds.start, duration))
+  const percent = Math.round((elapsed / duration) * 100)
   return {
-    '--channel-program-duration': `${duration}ms`,
-    '--channel-program-delay': `${-elapsed}ms`
+    width: `${percent}%`
   }
 }
 

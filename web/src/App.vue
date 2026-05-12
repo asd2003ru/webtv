@@ -98,6 +98,8 @@
             :is-playing="isPlaying"
             :is-muted="isMuted"
             :volume-level="volumeLevel"
+            :volume-overlay-visible="volumeOverlayVisible"
+            :volume-percent-label="volumePercentLabel"
             :can-prev-program="canPrevProgram"
             :can-next-program="canNextProgram"
             :can-seek-archive="canSeekArchive"
@@ -128,6 +130,7 @@
             :on-toggle-play-pause="togglePlayPause"
             :on-toggle-mute="toggleMute"
             :on-volume-input="onVolumeInput"
+            :on-volume-wheel="onVolumeWheel"
             :on-select-prev-program="selectPrevProgram"
             :on-select-next-program="selectNextProgram"
             :on-seek-by-seconds="seekBySeconds"
@@ -169,6 +172,7 @@
         <ChannelSidebar
           :sidebar-open="sidebarOpen"
           :t="t"
+          :now-tick-ms="nowTickMs"
           :channel-search-query="channelSearchQuery"
           :favorite-channels="favoriteChannels"
           :selected-channel="selectedChannel"
@@ -176,6 +180,7 @@
           :playlist-name-by-id="playlistNameById"
           :grouped-channels="groupedChannels"
           :now-program-by-channel="nowProgramByChannel"
+          :channels-refreshing="refreshingChannelList"
           :is-group-open="isGroupOpen"
           :show-channel-logo="showChannelLogo"
           :channel-initial="channelInitial"
@@ -189,6 +194,7 @@
           :on-mark-logo-error="markLogoError"
           :on-mark-favorite-logo-error="markFavoriteLogoError"
           :on-set-channel-search-query="setChannelSearchQuery"
+          :on-refresh-channels="refreshChannelListFromService"
         />
 
       </div>
@@ -281,6 +287,7 @@ const editingId = ref(0)
 const isPlaying = ref(false)
 const isMuted = ref(false)
 const volumeLevel = ref(1)
+const volumeOverlayVisible = ref(false)
 const playerAspectRatio = ref('16 / 9')
 const controlsVisible = ref(true)
 const sidebarOpen = ref(true)
@@ -288,6 +295,7 @@ const nowProgramByChannel = ref({})
 const openGroups = ref({})
 const settingsOpenGroups = ref({})
 const refreshingPlaylistIds = ref({})
+const refreshingChannelList = ref(false)
 const pictureInPictureSupported = ref(false)
 const isInPictureInPicture = ref(false)
 const favorites = ref([])
@@ -303,6 +311,7 @@ let playbackTicker = null
 let nowTicker = null
 let nowProgramsRefreshTimer = null
 let controlsHideTimer = null
+let volumeOverlayTimer = null
 const currentVideoSrc = ref('')
 let hls = null
 let lastForcedReloadAtMs = 0
@@ -392,6 +401,10 @@ const startupOverlayText = computed(() => {
   if (startupState.value === 'transcoding') return t('startup_transcoding_text')
   if (startupState.value === 'connecting_slow') return t('startup_slow_text')
   return t('startup_connecting_text')
+})
+const volumePercentLabel = computed(() => {
+  const effectiveLevel = isMuted.value ? 0 : volumeLevel.value
+  return `${Math.round(effectiveLevel * 100)}%`
 })
 const startupBadgeLabel = computed(() => {
   if (startupState.value === 'transcoding') return t('startup_transcoding_badge')
@@ -1722,12 +1735,23 @@ function onVideoPause() {
 function toggleMute() {
   if (!video.value) return
   video.value.muted = !video.value.muted
-  isMuted.value = video.value.muted
+  isMuted.value = video.value.muted || video.value.volume === 0
+  showVolumeOverlay()
 }
 
-function onVolumeInput(event) {
+function showVolumeOverlay() {
+  volumeOverlayVisible.value = true
+  if (volumeOverlayTimer) {
+    clearTimeout(volumeOverlayTimer)
+  }
+  volumeOverlayTimer = window.setTimeout(() => {
+    volumeOverlayVisible.value = false
+    volumeOverlayTimer = null
+  }, 1000)
+}
+
+function setVolumeLevel(level) {
   if (!video.value) return
-  const level = Number(event.target.value)
   if (!Number.isFinite(level)) return
   const bounded = Math.min(1, Math.max(0, level))
   video.value.volume = bounded
@@ -1735,6 +1759,20 @@ function onVolumeInput(event) {
   if (bounded > 0 && video.value.muted) {
     video.value.muted = false
   }
+  isMuted.value = video.value.muted || bounded === 0
+  showVolumeOverlay()
+}
+
+function onVolumeInput(event) {
+  const level = Number(event.target.value)
+  setVolumeLevel(level)
+}
+
+function onVolumeWheel(event) {
+  if (!video.value || event.deltaY === 0) return
+  revealControls()
+  const direction = event.deltaY < 0 ? 1 : -1
+  setVolumeLevel(video.value.volume + (direction * 0.05))
 }
 
 function onVideoVolumeChange() {
@@ -2105,6 +2143,18 @@ async function refresh(id) {
     await loadPlaylists()
   } finally {
     refreshingPlaylistIds.value[id] = false
+  }
+}
+
+async function refreshChannelListFromService() {
+  if (!selectedPlaylist.value || refreshingChannelList.value) return
+  refreshingChannelList.value = true
+  try {
+    await loadPlaylists()
+    await loadChannels()
+    await loadFavoriteNowPrograms()
+  } finally {
+    refreshingChannelList.value = false
   }
 }
 
@@ -2619,6 +2669,10 @@ onUnmounted(() => {
     clearTimeout(controlsHideTimer)
     controlsHideTimer = null
   }
+  if (volumeOverlayTimer) {
+    clearTimeout(volumeOverlayTimer)
+    volumeOverlayTimer = null
+  }
   flushBrokenLogos()
   clearStalledRecoveryTimer()
   clearStartupSlowTimer()
@@ -2959,6 +3013,23 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
   opacity: 0;
   pointer-events: none;
 }
+.volume-overlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  min-width: 74px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(7, 12, 18, 0.78);
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
 .hls-debug-overlay {
   position: absolute;
   top: 8px;
@@ -3039,6 +3110,34 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
 .player-controls-overlay .btn.subtle:hover { background: rgba(255, 255, 255, 0.2); }
 .channel-sidebar { border: 1px solid var(--border-soft); border-radius: 10px; padding: 10px; background: var(--card-soft); max-height: 75vh; overflow: hidden; display: grid; gap: 10px; grid-template-rows: auto auto minmax(0, 1fr); margin-top: 0; }
 .sidebar-head { display: flex; justify-content: space-between; align-items: center; }
+.channel-list-refresh {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--btn-border);
+  border-radius: 999px;
+  background: var(--card-strong);
+  color: #2e6daa;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+.channel-list-refresh:hover:not(:disabled) {
+  background: var(--btn-hover);
+}
+.channel-list-refresh:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.channel-list-refresh svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+.channel-list-refresh.refreshing svg {
+  animation: startup-spin 0.8s linear infinite;
+}
 .channel-search { position: relative; display: block; }
 .channel-search-input {
   width: 100%;
@@ -3109,17 +3208,9 @@ body { margin: 0; min-height: 100vh; background: linear-gradient(180deg, var(--b
 .channel-program-progress-fill {
   display: block;
   height: 100%;
-  width: 100%;
   border-radius: inherit;
   background: #4d84c4;
-  transform: scaleX(0);
-  transform-origin: left center;
-  animation: channel-program-progress var(--channel-program-duration, 1s) linear forwards;
-  animation-delay: var(--channel-program-delay, 0ms);
-}
-@keyframes channel-program-progress {
-  from { transform: scaleX(0); }
-  to { transform: scaleX(1); }
+  width: 0;
 }
 .channel-actions {
   justify-self: end;

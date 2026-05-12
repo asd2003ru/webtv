@@ -1,6 +1,11 @@
 <template>
   <div>
-    <div :ref="onSetPlayerWrapRef" class="player-wrap" :style="{ aspectRatio: playerAspectRatio }">
+    <div
+      :ref="onSetPlayerWrapRef"
+      class="player-wrap"
+      :style="{ aspectRatio: playerAspectRatio }"
+      @wheel.prevent="onVolumeWheel"
+    >
       <video
         :ref="onSetVideoRef"
         autoplay
@@ -22,6 +27,9 @@
         <span class="startup-spinner" aria-hidden="true"></span>
         <strong>{{ startupOverlayTitle }}</strong>
         <span>{{ startupOverlayText }}</span>
+      </div>
+      <div v-if="volumeOverlayVisible" class="volume-overlay" aria-live="polite">
+        {{ volumePercentLabel }}
       </div>
       <div
         class="player-hitbox"
@@ -209,6 +217,8 @@ defineProps({
   isPlaying: { type: Boolean, required: true },
   isMuted: { type: Boolean, required: true },
   volumeLevel: { type: Number, required: true },
+  volumeOverlayVisible: { type: Boolean, required: true },
+  volumePercentLabel: { type: String, required: true },
   canPrevProgram: { type: Boolean, required: true },
   canNextProgram: { type: Boolean, required: true },
   canSeekArchive: { type: Boolean, required: true },
@@ -239,6 +249,7 @@ defineProps({
   onTogglePlayPause: { type: Function, required: true },
   onToggleMute: { type: Function, required: true },
   onVolumeInput: { type: Function, required: true },
+  onVolumeWheel: { type: Function, required: true },
   onSelectPrevProgram: { type: Function, required: true },
   onSelectNextProgram: { type: Function, required: true },
   onSeekBySeconds: { type: Function, required: true },
